@@ -1,0 +1,10 @@
+{
+  "name": "memorysafe",
+  "version": "0.4.0",
+  "description": "Private local memory governance for Claude.",
+  "author": {
+    "name": "MemorySafe Beta"
+  },
+  "homepage": "https://memorysafe.ca",
+  "keywords": ["memory", "privacy", "mcp", "claude", "productivity"]
+}

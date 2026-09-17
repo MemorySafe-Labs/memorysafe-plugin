@@ -1,0 +1,95 @@
+#!/bin/sh
+# Print the path of a verified uv binary, downloading the pinned release on first use.
+#
+# stdout carries only that path: install_runtime.py and the launcher read it. Exit codes
+# are the ones install_runtime.py reports: 2 download failed, 3 checksum mismatch,
+# 4 data folder not writable, 1 anything else.
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$SCRIPT_DIR/runtime.env"
+DATA_ROOT=${MEMORYSAFE_INSTALL_ROOT:?MEMORYSAFE_INSTALL_ROOT must be set}
+
+if [ -n "${MEMORYSAFE_UV:-}" ]; then
+  # A locked-down network can still run MemorySafe with a uv the user installed.
+  if [ -x "$MEMORYSAFE_UV" ]; then
+    echo "$MEMORYSAFE_UV"
+    exit 0
+  fi
+  echo "MEMORYSAFE_UV is set to $MEMORYSAFE_UV, which is not an executable file." >&2
+  exit 2
+fi
+
+TARGET_DIR="$DATA_ROOT/tools/uv-$UV_VERSION"
+if [ -x "$TARGET_DIR/uv" ]; then
+  echo "$TARGET_DIR/uv"
+  exit 0
+fi
+
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) TARGET=aarch64-apple-darwin ;;
+  Darwin-x86_64) TARGET=x86_64-apple-darwin ;;
+  Linux-x86_64 | Linux-amd64) TARGET=x86_64-unknown-linux-musl ;;
+  Linux-aarch64 | Linux-arm64) TARGET=aarch64-unknown-linux-musl ;;
+  *)
+    echo "MemorySafe has no uv build for $(uname -s) $(uname -m)." >&2
+    exit 1
+    ;;
+esac
+
+ARCHIVE_NAME="uv-$TARGET.tar.gz"
+EXPECTED=$(awk -v name="$ARCHIVE_NAME" '$2 == name { print $1 }' "$SCRIPT_DIR/uv-checksums")
+if [ -z "$EXPECTED" ]; then
+  echo "No checksum is recorded for $ARCHIVE_NAME, so it will not be downloaded." >&2
+  exit 3
+fi
+
+if ! mkdir -p "$DATA_ROOT/tools" 2>/dev/null || [ ! -w "$DATA_ROOT/tools" ]; then
+  echo "Cannot write to $DATA_ROOT/tools." >&2
+  exit 4
+fi
+WORK=$(mktemp -d "$DATA_ROOT/tools/.uv-download-XXXXXX") || exit 4
+trap 'rm -rf "$WORK"' EXIT
+
+BASE_URL=${MEMORYSAFE_UV_BASE_URL:-https://github.com/astral-sh/uv/releases/download}
+URL="$BASE_URL/$UV_VERSION/$ARCHIVE_NAME"
+if command -v curl >/dev/null 2>&1; then
+  if ! curl --fail --silent --show-error --location --output "$WORK/$ARCHIVE_NAME" "$URL" >&2; then
+    echo "Could not download $URL" >&2
+    exit 2
+  fi
+elif command -v wget >/dev/null 2>&1; then
+  if ! wget --quiet --output-document="$WORK/$ARCHIVE_NAME" "$URL" >&2; then
+    echo "Could not download $URL" >&2
+    exit 2
+  fi
+else
+  echo "Neither curl nor wget is available to download uv." >&2
+  exit 2
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL=$(sha256sum "$WORK/$ARCHIVE_NAME" | awk '{ print $1 }')
+else
+  ACTUAL=$(shasum -a 256 "$WORK/$ARCHIVE_NAME" | awk '{ print $1 }')
+fi
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+  rm -f "$WORK/$ARCHIVE_NAME"
+  echo "The downloaded uv did not match its recorded checksum. It was deleted and not run." >&2
+  exit 3
+fi
+
+tar -xzf "$WORK/$ARCHIVE_NAME" -C "$WORK"
+mkdir "$WORK/publish"
+mv "$WORK/uv-$TARGET/uv" "$WORK/publish/uv"
+chmod 755 "$WORK/publish/uv"
+# Two launchers can race here on a first start. Whichever renames first wins, and the
+# other uses what it published.
+if [ ! -e "$TARGET_DIR" ]; then
+  mv "$WORK/publish" "$TARGET_DIR" 2>/dev/null || true
+fi
+if [ ! -x "$TARGET_DIR/uv" ]; then
+  echo "Could not install uv into $TARGET_DIR." >&2
+  exit 4
+fi
+echo "$TARGET_DIR/uv"

@@ -1,0 +1,130 @@
+#!/bin/sh
+# MemorySafe launcher for the Claude Code and Codex plugins and the Claude Desktop
+# extension on macOS and Linux.
+#
+# stdout is the MCP channel. Nothing here may write to it: every message goes to stderr
+# or the install log, and the process on the other end of every exec speaks JSON-RPC.
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PLUGIN_DIR=$(dirname "$SCRIPT_DIR")
+. "$SCRIPT_DIR/runtime.env"
+
+if [ "${MEMORYSAFE_INSTALL_ROOT:-}" = '${user_config.memory_directory}' ]; then
+  # Claude Desktop leaves the optional directory token unresolved when the field is
+  # blank. It is not a path; fall through to the platform's standard data root.
+  unset MEMORYSAFE_INSTALL_ROOT
+fi
+if [ -n "${MEMORYSAFE_INSTALL_ROOT:-}" ]; then
+  DATA_ROOT="$MEMORYSAFE_INSTALL_ROOT"
+elif [ "$(uname -s 2>/dev/null || echo unknown)" = "Linux" ]; then
+  DATA_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/MemorySafe"
+else
+  DATA_ROOT="$HOME/Library/Application Support/MemorySafe"
+fi
+
+# Every host resolves the same root, so every host shares one store. The plugin data
+# directories Claude Code and Codex offer are per host and would split it.
+export MEMORYSAFE_INSTALL_ROOT="$DATA_ROOT"
+export MEMORYSAFE_DB_PATH="${MEMORYSAFE_DB_PATH:-$DATA_ROOT/data/memorysafe.sqlite3}"
+export MEMORYSAFE_STATE_DIR="${MEMORYSAFE_STATE_DIR:-$DATA_ROOT/runtime-state}"
+# Only the plugin's own code. An inherited PYTHONPATH would put the user's packages ahead
+# of the hash-pinned ones in the runtime, and the lock would no longer decide what runs.
+export PYTHONPATH="$PLUGIN_DIR/src"
+# tiktoken downloads its encoding on first use and caches it in the system temp folder,
+# so it downloaded again whenever that was cleared, while the install guide promises that
+# nothing leaves this computer after the first start. In the data root, one copy lasts.
+export TIKTOKEN_CACHE_DIR="$DATA_ROOT/cache/tiktoken"
+mkdir -p "$DATA_ROOT/data" "$MEMORYSAFE_STATE_DIR/logs" 2>/dev/null || true
+
+RUNTIME_DIR="$DATA_ROOT/runtime/$RUNTIME_KEY"
+RUNTIME_PYTHON="$RUNTIME_DIR/bin/python"
+INSTALL_LOG="$MEMORYSAFE_STATE_DIR/logs/claude-install.log"
+
+quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+write_cli_shim() {
+  # The memorysafe command follows whichever plugin started last, so it always runs that
+  # plugin's code on the runtime built for its lock. It never edits a shell profile.
+  mkdir -p "$DATA_ROOT/bin"
+  shim="$DATA_ROOT/bin/memorysafe"
+  temporary="$shim.tmp.$$"
+  {
+    echo '#!/bin/sh'
+    echo '# Written by the MemorySafe launcher on every start. Edits are overwritten.'
+    echo "export MEMORYSAFE_INSTALL_ROOT=$(quote "$DATA_ROOT")"
+    echo "export PYTHONPATH=$(quote "$PLUGIN_DIR/src")"
+    echo "export TIKTOKEN_CACHE_DIR=$(quote "$DATA_ROOT/cache/tiktoken")"
+    echo "if [ ! -x $(quote "$RUNTIME_PYTHON") ]; then"
+    echo "  echo 'MemorySafe is still finishing its one-time setup. Try again in a minute.' >&2"
+    echo '  exit 1'
+    echo 'fi'
+    echo "exec $(quote "$RUNTIME_PYTHON") -m memorysafe_chatgpt.cli \"\$@\""
+  } > "$temporary"
+  chmod 755 "$temporary"
+  mv -f "$temporary" "$shim"
+}
+
+# Written before choosing a path, not only once the runtime is ready: the install guide
+# tells people to run bin/memorysafe migrate straight after installing, and that first
+# session is a pending start. Until the runtime exists the shim says setup is unfinished.
+write_cli_shim >>"$INSTALL_LOG" 2>&1 || true
+
+if [ -x "$RUNTIME_PYTHON" ] && [ -f "$RUNTIME_DIR/ready" ]; then
+  exec "$RUNTIME_PYTHON" "$SCRIPT_DIR/bootstrap_server.py"
+fi
+
+usable_python() {
+  [ -x "$1" ] || return 1
+  if [ "$1" = /usr/bin/python3 ] && [ "$(uname -s)" = Darwin ]; then
+    # Without the Command Line Tools this is a stub, and running it opens Apple's
+    # install dialog in front of someone who only started their assistant.
+    xcode-select -p >/dev/null 2>&1 || return 1
+  fi
+  "$1" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 8) else 1)' >/dev/null 2>&1
+}
+
+find_python() {
+  if [ -n "${PYTHON_SOURCE:-}" ]; then
+    usable_python "$PYTHON_SOURCE" && echo "$PYTHON_SOURCE" && return 0
+    return 1
+  fi
+  found=$(command -v python3 2>/dev/null || true)
+  if [ -n "$found" ] && usable_python "$found"; then
+    echo "$found"
+    return 0
+  fi
+  for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+    if usable_python "$candidate"; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# First start: the proxy answers the handshake immediately and builds the runtime in
+# the background. Codex allows ten seconds and Claude Code thirty; the build takes longer.
+export MEMORYSAFE_RUNTIME_PENDING=1
+if PROXY_PYTHON=$(find_python); then
+  exec "$PROXY_PYTHON" "$SCRIPT_DIR/bootstrap_server.py"
+fi
+
+# No Python at all. uv can provide one, but only by downloading it before the handshake,
+# so this one start may miss Codex's window. The download finishes, and the next start
+# is instant.
+# Each command gets /dev/null for stdin: the host's JSON-RPC messages are already waiting
+# on this process's stdin, and whatever these read, the proxy would never answer.
+# --no-bin keeps uv from linking python3.12 into ~/.local/bin, outside the MemorySafe folder.
+if UV=$(/bin/sh "$SCRIPT_DIR/ensure_uv" </dev/null 2>>"$INSTALL_LOG") \
+  && UV_PYTHON_INSTALL_DIR="$DATA_ROOT/python" UV_CACHE_DIR="$DATA_ROOT/cache/uv" \
+    "$UV" python install --no-bin "$PYTHON_VERSION" </dev/null >>"$INSTALL_LOG" 2>&1 \
+  && MANAGED_PYTHON=$(UV_PYTHON_INSTALL_DIR="$DATA_ROOT/python" \
+    "$UV" python find --managed-python "$PYTHON_VERSION" </dev/null 2>>"$INSTALL_LOG"); then
+  exec "$MANAGED_PYTHON" "$SCRIPT_DIR/bootstrap_server.py"
+fi
+
+echo "MemorySafe: no usable Python was found and uv could not provide one. See $INSTALL_LOG" >&2
+exit 1

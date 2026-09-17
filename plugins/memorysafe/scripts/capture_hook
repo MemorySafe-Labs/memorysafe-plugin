@@ -1,0 +1,36 @@
+#!/bin/sh
+# Runs capture_hook.py with the plugin runtime when it exists, otherwise any python3.
+#
+# Every path here exits 0. A UserPromptSubmit hook that exits 2 blocks the user's
+# prompt, and a capture hint is never worth that -- so no `set -e`, and no command
+# whose failure could leak its status out of this script.
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+[ -f "$SCRIPT_DIR/runtime.env" ] || exit 0
+[ -f "$SCRIPT_DIR/capture_hook.py" ] || exit 0
+. "$SCRIPT_DIR/runtime.env"
+
+if [ "${MEMORYSAFE_INSTALL_ROOT:-}" = '${user_config.memory_directory}' ]; then
+  unset MEMORYSAFE_INSTALL_ROOT
+fi
+if [ -n "${MEMORYSAFE_INSTALL_ROOT:-}" ]; then
+  DATA_ROOT="$MEMORYSAFE_INSTALL_ROOT"
+elif [ "$(uname -s 2>/dev/null)" = "Linux" ]; then
+  DATA_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/MemorySafe"
+else
+  DATA_ROOT="$HOME/Library/Application Support/MemorySafe"
+fi
+export MEMORYSAFE_INSTALL_ROOT="$DATA_ROOT"
+
+PYTHON="$DATA_ROOT/runtime/$RUNTIME_KEY/bin/python"
+if [ ! -x "$PYTHON" ]; then
+  PYTHON=$(command -v python3 2>/dev/null) || exit 0
+  if [ "$PYTHON" = /usr/bin/python3 ] && [ "$(uname -s)" = Darwin ]; then
+    # Without the Command Line Tools this is a stub that opens an install dialog on
+    # every prompt.
+    xcode-select -p >/dev/null 2>&1 || exit 0
+  fi
+fi
+
+"$PYTHON" "$SCRIPT_DIR/capture_hook.py" 2>/dev/null
+exit 0
