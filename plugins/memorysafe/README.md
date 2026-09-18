@@ -34,7 +34,8 @@ Claude Desktop: install `memorysafe-claude-desktop.mcpb` from the same repositor
 
 - One SQLite file serves Claude Code, Claude Desktop and Codex:
   `~/Library/Application Support/MemorySafe/data/memorysafe.sqlite3` on macOS,
-  `~/.local/share/MemorySafe/data/memorysafe.sqlite3` on Linux.
+  `~/.local/share/MemorySafe/data/memorysafe.sqlite3` on Linux,
+  `%LOCALAPPDATA%\MemorySafe\data\memorysafe.sqlite3` on Windows.
 - The dashboard is reachable only from this computer, at `http://127.0.0.1:8765/dashboard`.
 - MemorySafe does not copy full conversations and does not read an assistant's own memory.
 - The first start downloads uv, a Python, pinned packages and tokenizer data. After that

@@ -44,7 +44,38 @@ def _dashboard_status(host: str, port: int) -> dict | None:
     return {"version": version, "pid": pid if isinstance(pid, int) and not isinstance(pid, bool) else None}
 
 
+# subprocess exposes these only on Windows; spelled out so this module imports
+# and its tests run on Linux.
+_DETACHED_PROCESS = 0x00000008
+_CREATE_NO_WINDOW = 0x08000000
+
+
+def _windows_process_alive(pid: int) -> bool:
+    # Kept separate so _process_alive's branch is testable on Linux: ctypes.windll
+    # does not exist here, so the tests patch this function rather than ctypes.
+    # STILL_ACTIVE means the handle refers to a live process rather than one that
+    # has exited but not been reaped.
+    import ctypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return False
+    try:
+        code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return False
+        return code.value == STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _process_alive(pid: int) -> bool:
+    if os.name == "nt":
+        # os.kill(pid, 0) TERMINATES the target on Windows rather than probing it.
+        return _windows_process_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -54,6 +85,12 @@ def _process_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def _dashboard_spawn_options() -> dict:
+    if os.name == "nt":
+        return {"creationflags": _DETACHED_PROCESS | _CREATE_NO_WINDOW}
+    return {"start_new_session": True}
 
 
 def _read_dashboard_record(state_dir: Path) -> dict | None:
@@ -91,9 +128,6 @@ def _replace_stale_dashboard(host: str, port: int, state_dir: Path) -> bool:
     version must also differ from this launcher's and match the record.
     """
 
-    if os.name == "nt":
-        # os.kill(pid, 0) terminates the process on Windows. Deferred to the Windows port.
-        return False
     record = _read_dashboard_record(state_dir)
     if record is None or not _process_alive(record["pid"]):
         return False
@@ -106,7 +140,22 @@ def _replace_stale_dashboard(host: str, port: int, state_dir: Path) -> bool:
     ):
         return False
     try:
-        os.kill(record["pid"], signal.SIGTERM)
+        if os.name == "nt":
+            # Windows has no SIGTERM to forward; TerminateProcess (what
+            # Popen.terminate() calls) is the only stop signal available, and
+            # taskkill is the documented way to reach it by PID without first
+            # opening a handle ourselves. /T also takes any child the stale
+            # dashboard spawned, since a bare TerminateProcess would not.
+            # A non-zero exit (already gone, access denied) is left to the
+            # polling loop below rather than raised, same as the POSIX branch.
+            subprocess.run(
+                ["taskkill", "/PID", str(record["pid"]), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+        else:
+            os.kill(record["pid"], signal.SIGTERM)
     except (ProcessLookupError, PermissionError, OSError):
         # The recorded PID can outlive the process it named, same as in
         # _process_alive above; the gap here is the network round trip to
@@ -122,14 +171,33 @@ def _replace_stale_dashboard(host: str, port: int, state_dir: Path) -> bool:
     return False
 
 
+def _default_state_dir() -> Path:
+    """The state dir this launcher falls back to when MEMORYSAFE_STATE_DIR is unset.
+
+    Mirrors the three-way platform split in cli.py's _resolve_database: win32 ->
+    %LOCALAPPDATA%, darwin -> ~/Library/Application Support, else XDG. This used to
+    hardcode the darwin branch with no platform check at all, so a Windows run
+    without MEMORYSAFE_STATE_DIR set landed under a macOS-only path.
+    """
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        xdg = os.environ.get("XDG_DATA_HOME")
+        base = Path(xdg) if xdg else Path.home() / ".local" / "share"
+    return base / "MemorySafe" / "runtime-state"
+
+
 def _start_dashboard() -> None:
     host = "127.0.0.1"
     port = int(os.environ.get("MEMORYSAFE_SETUP_PORT", "8765"))
+    # os.environ.get(key, _default_state_dir()) evaluates the default argument before
+    # the call runs, so it always ran _default_state_dir() -- including its win32
+    # Path.home() fallback -- even when MEMORYSAFE_STATE_DIR was already set. `or`
+    # short-circuits instead, so the fallback only runs when it is actually needed.
     state_dir = Path(
-        os.environ.get(
-            "MEMORYSAFE_STATE_DIR",
-            Path.home() / "Library" / "Application Support" / "MemorySafe" / "runtime-state",
-        )
+        os.environ.get("MEMORYSAFE_STATE_DIR") or _default_state_dir()
     ).expanduser()
     if _dashboard_is_running(host, port) and not _replace_stale_dashboard(host, port, state_dir):
         return
@@ -143,8 +211,8 @@ def _start_dashboard() -> None:
             stdin=subprocess.DEVNULL,
             stdout=log_file,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
             close_fds=True,
+            **_dashboard_spawn_options(),
         )
     finally:
         log_file.close()

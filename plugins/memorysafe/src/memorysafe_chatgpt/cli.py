@@ -27,7 +27,7 @@ def _resolve_database(install_root: Path | None) -> Path:
     elif os.environ.get("MEMORYSAFE_INSTALL_ROOT"):
         root = Path(os.environ["MEMORYSAFE_INSTALL_ROOT"])
     elif sys.platform == "win32":
-        root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "MemorySafe"
+        root = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")) / "MemorySafe"
     elif sys.platform == "darwin":
         root = Path.home() / "Library" / "Application Support" / "MemorySafe"
     else:

@@ -1,7 +1,7 @@
-# MemorySafe 0.4.0
+# MemorySafe 0.4.1
 
 Private, governed memory for Claude Code, Claude Desktop and Codex, kept in one SQLite
-file on your own computer. macOS and Linux.
+file on your own computer. macOS, Linux and Windows.
 
 ## Claude Code
 

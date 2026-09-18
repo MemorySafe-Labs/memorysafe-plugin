@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "memorysafe": {
-      "command": "/bin/sh",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/start"]
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/start",
+      "args": []
     }
   }
 }

@@ -104,13 +104,28 @@ class DoctorPaths:
 
     @classmethod
     def from_install_root(cls, install_root: Path | None = None) -> "DoctorPaths":
-        root = Path(
-            install_root
-            or os.environ.get(
-                "MEMORYSAFE_INSTALL_ROOT",
-                Path.home() / "Library" / "Application Support" / "MemorySafe",
-            )
-        ).expanduser().resolve()
+        # platform_default used to be computed as a plain statement above this branch,
+        # so its Path.home() call ran unconditionally -- even for a caller who passed
+        # install_root or set MEMORYSAFE_INSTALL_ROOT, whose value was going to win
+        # anyway. Path.home() raises RuntimeError when it cannot resolve a home
+        # directory (no USERPROFILE/HOMEDRIVE+HOMEPATH on Windows, no HOME and no
+        # passwd entry on POSIX), so an override-set caller still crashed if that
+        # branch's Path.home() would have raised, purely from computing a default that
+        # was never going to be used. Each branch below now runs only when it is the
+        # one actually needed, matching cli.py's _resolve_database.
+        env_install_root = os.environ.get("MEMORYSAFE_INSTALL_ROOT")
+        if install_root:
+            root = Path(install_root)
+        elif env_install_root:
+            root = Path(env_install_root)
+        elif sys.platform == "win32":
+            root = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")) / "MemorySafe"
+        elif sys.platform == "darwin":
+            root = Path.home() / "Library" / "Application Support" / "MemorySafe"
+        else:
+            xdg = os.environ.get("XDG_DATA_HOME")
+            root = (Path(xdg) if xdg else Path.home() / ".local" / "share") / "MemorySafe"
+        root = root.expanduser().resolve()
         state = Path(os.environ.get("MEMORYSAFE_STATE_DIR", root / "runtime-state")).expanduser().resolve()
         return cls(
             install_root=root,
@@ -422,14 +437,21 @@ def _process_running(pattern: str) -> bool | None:
     return bool(completed.stdout.strip())
 
 
-def _launch_services_check() -> dict[str, Any]:
+def _launch_services_check() -> dict[str, Any] | None:
     """Registration and liveness are different facts, so report them separately.
 
     Reporting "unavailable" for a service whose process is running was wrong in
     both directions: it contradicted the connection check in the same report,
     and it hid the finding that actually matters, which is that nothing would
     come back after a restart.
+
+    launchd is macOS-only, so there is nothing to check on Windows -- and nothing
+    to widen the except for either. os.getuid() does not exist there, and
+    AttributeError was never in the caught tuple, so a caller that dropped the
+    run_doctor darwin gate crashed the whole report instead of skipping this check.
     """
+    if os.name == "nt":
+        return None
     patterns = {
         "ca.memorysafe.beta.setup": "memorysafe_chatgpt.setup_app",
         "ca.memorysafe.beta.tunnel": "tunnel-client run --config",

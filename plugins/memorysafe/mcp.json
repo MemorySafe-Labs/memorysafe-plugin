@@ -3,8 +3,9 @@
   "mcpServers": {
     "memorysafe": {
       "type": "stdio",
-      "command": "sh",
-      "args": ["${PLUGIN_ROOT}/scripts/start"]
+      "command": "./scripts/start",
+      "args": [],
+      "cwd": "${PLUGIN_ROOT}"
     }
   }
 }

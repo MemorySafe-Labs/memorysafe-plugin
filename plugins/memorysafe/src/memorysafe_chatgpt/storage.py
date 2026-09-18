@@ -6,6 +6,7 @@ import unicodedata
 import sqlite3
 import uuid
 from collections import Counter
+from contextlib import closing, contextmanager
 from functools import lru_cache
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
@@ -294,8 +295,31 @@ class MemoryStore:
                 raise
         return connection
 
+    @contextmanager
+    def _session(self):
+        """Open one connection for one operation, commit-or-rollback it, then close it.
+
+        `with <sqlite3.Connection>:` only manages the transaction -- it commits on a
+        clean exit and rolls back on an exception, but it leaves the connection OPEN.
+        That was invisible on POSIX, where unlinking an open file is legal, but on
+        Windows SQLite opens the database file without FILE_SHARE_DELETE: a connection
+        left open here by e.g. `remember()` blocked doctor.py's support-bundle copy,
+        `memorysafe migrate`, and a user backing up or moving their own store, minutes
+        or even processes later. This wraps the same commit/rollback semantics in a
+        `finally: connection.close()` so every operation still leaves nothing open,
+        without introducing a pooled or cached connection -- a fresh connection per
+        operation is still what lets several assistant processes write to this file
+        at once.
+        """
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with self._session() as connection:
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS memories (
@@ -394,7 +418,7 @@ class MemoryStore:
         account for. A guarantee nobody can inspect is a claim.
         """
 
-        with self._connect() as connection:
+        with self._session() as connection:
             memory = connection.execute(
                 "SELECT * FROM memories WHERE id = ?", (memory_id,)
             ).fetchone()
@@ -456,7 +480,7 @@ class MemoryStore:
         only ever rates how tidy the shelf looks.
         """
 
-        with self._connect() as connection:
+        with self._session() as connection:
             # Pruning trims the log, not the history. Without adding the pruned tally
             # back, the reported total silently stopped at the cap while the real number
             # kept climbing — a counter that lies once it matters most.
@@ -550,8 +574,15 @@ class MemoryStore:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
         target = directory / f"memorysafe-{stamp}.sqlite3"
         try:
-            with self._connect() as source, sqlite3.connect(target) as destination:
-                source.backup(destination)
+            # Two connections here, not one: the source (this store) and the fresh
+            # snapshot file being written. Both leaked on the old `with sqlite3.connect(...)
+            # as x:` pattern, so both need an explicit close -- `_session()` for the
+            # source, `contextlib.closing()` for the destination (its own `with
+            # destination:` still gives it the same commit/rollback semantics it had
+            # before).
+            with self._session() as source, closing(sqlite3.connect(target)) as destination:
+                with destination:
+                    source.backup(destination)
         except sqlite3.Error:
             return None
 
@@ -569,7 +600,7 @@ class MemoryStore:
         memorysafe.sqlite3 alone brings back an older, smaller store without saying so.
         """
 
-        with self._connect() as connection:
+        with self._session() as connection:
             busy, written, checkpointed = connection.execute(
                 "PRAGMA wal_checkpoint(TRUNCATE)"
             ).fetchone()
@@ -594,7 +625,7 @@ class MemoryStore:
         )
 
     def automatic_mode_enabled(self) -> bool:
-        with self._connect() as connection:
+        with self._session() as connection:
             row = connection.execute(
                 "SELECT value FROM settings WHERE key = 'automatic_mode'"
             ).fetchone()
@@ -602,7 +633,7 @@ class MemoryStore:
 
     def set_automatic_mode(self, enabled: bool) -> dict[str, Any]:
         value = "enabled" if enabled else "disabled"
-        with self._connect() as connection:
+        with self._session() as connection:
             connection.execute(
                 """
                 INSERT INTO settings(key, value, updated_at)
@@ -621,7 +652,7 @@ class MemoryStore:
         }
 
     def record_automatic_skip(self, reason: str, content: str = "") -> None:
-        with self._connect() as connection:
+        with self._session() as connection:
             self._record_event(
                 connection,
                 "SKIP_AUTO",
@@ -685,7 +716,7 @@ class MemoryStore:
             confidence = derived_confidence if confidence is None else confidence
         must_protect = category in {"decision", "safety"} or importance >= 0.8
 
-        with self._connect() as connection:
+        with self._session() as connection:
             exact = connection.execute(
                 """
                 SELECT * FROM memories
@@ -865,7 +896,7 @@ class MemoryStore:
         if query_normalized and not query_terms:
             # Nothing but stopwords: no basis to return anything.
             query_normalized = ""
-        with self._connect() as connection:
+        with self._session() as connection:
             if query_terms:
                 # Previously this took the top 1000 by protection, importance and
                 # recency and scored only those. Past a thousand memories anything
@@ -935,7 +966,7 @@ class MemoryStore:
             # so neither the dashboard nor the user could tell the difference.
             surfaced = scored[:limit]
             recalled_bytes = sum(len(str(row["content"]).encode("utf-8")) for _, row in surfaced)
-            with self._connect() as connection:
+            with self._session() as connection:
                 self._record_event(
                     connection,
                     "RECALL",
@@ -965,7 +996,7 @@ class MemoryStore:
 
     def forget(self, memory_id: str) -> dict[str, Any]:
         timestamp = _now()
-        with self._connect() as connection:
+        with self._session() as connection:
             row = connection.execute(
                 "SELECT * FROM memories WHERE id = ?",
                 (memory_id,),
@@ -1095,7 +1126,7 @@ class MemoryStore:
         }
 
     def _relations_for(self, memory_id: str) -> list[dict[str, Any]]:
-        with self._connect() as connection:
+        with self._session() as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM memory_relations
@@ -1126,7 +1157,7 @@ class MemoryStore:
         return self.explain(memory_id)
 
     def review_conflicts(self, include_resolved: bool = False) -> dict[str, Any]:
-        with self._connect() as connection:
+        with self._session() as connection:
             if include_resolved:
                 rows = connection.execute(
                     "SELECT * FROM memory_relations ORDER BY id DESC LIMIT 50"
@@ -1197,7 +1228,7 @@ class MemoryStore:
                 ),
             }
         timestamp = _now()
-        with self._connect() as connection:
+        with self._session() as connection:
             row = connection.execute(
                 "SELECT * FROM memory_relations WHERE id = ?", (conflict_id,)
             ).fetchone()
@@ -1305,7 +1336,7 @@ class MemoryStore:
                 "reason": "Nothing was changed. Call again with confirm=true after the user agrees.",
             }
         timestamp = _now()
-        with self._connect() as connection:
+        with self._session() as connection:
             row = connection.execute(
                 "SELECT * FROM memories WHERE id = ?", (memory_id,)
             ).fetchone()
@@ -1346,7 +1377,7 @@ class MemoryStore:
         }
 
     def health(self) -> dict[str, Any]:
-        with self._connect() as connection:
+        with self._session() as connection:
             memories = connection.execute(
                 "SELECT * FROM memories WHERE state = 'active'"
             ).fetchall()

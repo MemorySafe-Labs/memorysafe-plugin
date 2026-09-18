@@ -40,6 +40,23 @@ from memorysafe_chatgpt.bootstrap_catalog import (
 _CHILD_INITIALIZE_ID = "memorysafe-bootstrap-initialize"
 SCRIPT_DIR = Path(__file__).resolve().parent
 PENDING_DEADLINE_SECONDS = 40.0
+# subprocess exposes these only on Windows, so reading them off the module would
+# raise AttributeError on Linux - in CI and in any test that patches os.name.
+_DETACHED_PROCESS = 0x00000008
+_CREATE_NEW_PROCESS_GROUP = 0x00000200
+_CREATE_NO_WINDOW = 0x08000000
+
+
+def _detached_spawn_options():
+    # Its own session: the build must finish even if the host gives up on this
+    # process, so the next start finds a runtime instead of starting over.
+    # start_new_session is POSIX-only - on Windows it is accepted and ignored, so
+    # the guarantee above silently did not hold there until these flags were added.
+    if os.name == "nt":
+        return {"creationflags": _DETACHED_PROCESS | _CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
 SETUP_IN_PROGRESS_MESSAGE = (
     "MemorySafe is finishing its one-time setup. Nothing was saved; try again in a minute."
 )
@@ -81,6 +98,23 @@ def _read_runtime_env() -> Dict[str, str]:
             key, value = line.split("=", 1)
             values[key] = value
     return values
+
+
+def _runtime_child_command() -> List[str]:
+    override = os.environ.get("MEMORYSAFE_BOOTSTRAP_CHILD_COMMAND")
+    if override:
+        return _json_command(override, "MEMORYSAFE_BOOTSTRAP_CHILD_COMMAND")
+    # os.path, not pathlib: pathlib picks WindowsPath vs PosixPath from the real os.name
+    # at construction time, and this process cannot instantiate a WindowsPath on POSIX --
+    # which is exactly what breaks a test that patches os.name to exercise this branch.
+    runtime_dir = os.path.join(
+        os.environ["MEMORYSAFE_INSTALL_ROOT"], "runtime", _read_runtime_env()["RUNTIME_KEY"]
+    )
+    if os.name == "nt":
+        interpreter = os.path.join(runtime_dir, "Scripts", "python.exe")
+    else:
+        interpreter = os.path.join(runtime_dir, "bin", "python")
+    return [interpreter, "-m", "memorysafe_chatgpt.claude_launcher"]
 
 
 def _setup_in_progress_reply(message: Dict[str, Any]) -> Dict[str, Any]:
@@ -138,21 +172,11 @@ class BootstrapProxy:
         return [
             sys.executable,
             str(SCRIPT_DIR / "install_runtime.py"),
-            "--builder",
-            "uv",
             "--plugin-dir",
             str(SCRIPT_DIR.parent),
             "--data-root",
             os.environ["MEMORYSAFE_INSTALL_ROOT"],
         ]
-
-    @staticmethod
-    def _runtime_child_command() -> List[str]:
-        override = os.environ.get("MEMORYSAFE_BOOTSTRAP_CHILD_COMMAND")
-        if override:
-            return _json_command(override, "MEMORYSAFE_BOOTSTRAP_CHILD_COMMAND")
-        runtime = Path(os.environ["MEMORYSAFE_INSTALL_ROOT"]) / "runtime" / _read_runtime_env()["RUNTIME_KEY"]
-        return [str(runtime / "bin" / "python"), "-m", "memorysafe_chatgpt.claude_launcher"]
 
     def _build_then_start(self) -> None:
         log_path: Optional[Path] = None
@@ -170,15 +194,13 @@ class BootstrapProxy:
                 code = _EXIT_UNWRITABLE
             else:
                 try:
-                    # Its own session: the build must finish even if the host gives up on
-                    # this process, so the next start finds a runtime instead of starting over.
                     build = subprocess.Popen(
                         self._build_command(),
                         stdin=subprocess.DEVNULL,
                         stdout=log,
                         stderr=subprocess.STDOUT,
-                        start_new_session=True,
                         close_fds=True,
+                        **_detached_spawn_options(),
                     )
                     code = build.wait()
                 except Exception as error:
@@ -188,7 +210,7 @@ class BootstrapProxy:
                     log.close()
 
             if code == 0:
-                command = self._runtime_child_command()
+                command = _runtime_child_command()
                 extra: Dict[str, str] = {}
             else:
                 _log(f"runtime build exited with {code}; starting limited mode")
@@ -234,7 +256,14 @@ class BootstrapProxy:
             errors="replace",
             bufsize=1,
             env=environment,
+            **({"creationflags": _CREATE_NO_WINDOW} if os.name == "nt" else {}),
         )
+        # subprocess.Popen has no newline= parameter -- text mode leaves both pipes at
+        # the default newline=None, which on Windows rewrites every "\n" this proxy
+        # writes to \r\n before it reaches the child. Reconfigured to newline="" so a
+        # \r is never inserted into a newline-delimited JSON-RPC message either way.
+        child.stdin.reconfigure(newline="")
+        child.stdout.reconfigure(newline="")
         with self._state_lock:
             closing = self._closing
             self._child = child
@@ -462,6 +491,11 @@ class BootstrapProxy:
 
 
 def main() -> int:
+    # Python opens stdout with newline=None on Windows, which rewrites every "\n" this
+    # process writes to "\r\n" -- and stdout is the JSON-RPC channel every reply, from
+    # every thread BootstrapProxy can start, travels over. Reconfigured first, before
+    # anything else in this function runs, so nothing can write ahead of it.
+    sys.stdout.reconfigure(newline="")
     pending = os.environ.get("MEMORYSAFE_RUNTIME_PENDING") == "1"
     try:
         proxy = BootstrapProxy(pending=pending)

@@ -293,7 +293,7 @@ def canonical_data_dir() -> Path:
     """
 
     if sys.platform == "win32":
-        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
     elif sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support"
     else:

@@ -68,11 +68,32 @@ else
   exit 2
 fi
 
+# set -eu has no pipefail (not POSIX), so "sha256sum ... | awk ..." would not do what
+# it looks like it does: if sha256sum fails, awk still exits 0 on the empty input it
+# gets instead, the pipeline's status (awk's) is 0, ACTUAL becomes "", and the mismatch
+# check below reported "did not match its recorded checksum" -- exactly the confusion
+# the Windows twin (ensure_uv.cmd, and the incident comment on its checksum
+# verification) was rebuilt to eliminate there. Fails safe either way (no unverified
+# binary runs), but a tool failure is not a fact about the download, so it must not be
+# reported as one. Running the hasher and capturing ITS OWN exit status first, with no
+# pipe in that step, is what makes the two distinguishable; awk only ever sees output
+# from a hasher that is already known to have succeeded.
+DIGEST_STATUS=
 if command -v sha256sum >/dev/null 2>&1; then
-  ACTUAL=$(sha256sum "$WORK/$ARCHIVE_NAME" | awk '{ print $1 }')
+  DIGEST_OUTPUT=$(sha256sum "$WORK/$ARCHIVE_NAME") || DIGEST_STATUS=$?
+elif command -v shasum >/dev/null 2>&1; then
+  DIGEST_OUTPUT=$(shasum -a 256 "$WORK/$ARCHIVE_NAME") || DIGEST_STATUS=$?
 else
-  ACTUAL=$(shasum -a 256 "$WORK/$ARCHIVE_NAME" | awk '{ print $1 }')
+  echo "Neither sha256sum nor shasum is available to verify $ARCHIVE_NAME. It was not run." >&2
+  rm -f "$WORK/$ARCHIVE_NAME"
+  exit 1
 fi
+if [ -n "$DIGEST_STATUS" ]; then
+  echo "Could not compute a checksum for $ARCHIVE_NAME. It was not run." >&2
+  rm -f "$WORK/$ARCHIVE_NAME"
+  exit 1
+fi
+ACTUAL=$(printf '%s\n' "$DIGEST_OUTPUT" | awk '{ print $1 }')
 if [ "$ACTUAL" != "$EXPECTED" ]; then
   rm -f "$WORK/$ARCHIVE_NAME"
   echo "The downloaded uv did not match its recorded checksum. It was deleted and not run." >&2

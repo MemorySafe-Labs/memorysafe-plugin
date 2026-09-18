@@ -76,6 +76,8 @@ def database_path() -> Path:
     root = os.environ.get("MEMORYSAFE_INSTALL_ROOT")
     if root and root != "${user_config.memory_directory}":
         base = Path(root)
+    elif sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")) / "MemorySafe"
     elif sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support" / "MemorySafe"
     else:

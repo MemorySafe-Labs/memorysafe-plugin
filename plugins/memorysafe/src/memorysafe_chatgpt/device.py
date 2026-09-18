@@ -5,10 +5,25 @@ import os
 import platform
 import sys
 import tempfile
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TextIO
+
+# fcntl.flock is scoped to the open file *description*, so on POSIX two threads in one
+# process that each open() the lock file get independent descriptions and genuinely
+# block each other -- the file lock happens to also serialise threads, as a side effect
+# of the API rather than by design. msvcrt.locking is scoped to the *process*: a second
+# thread asking for a byte range the process already holds does not wait, it fails fast
+# with EDEADLOCK ("Resource deadlock avoided"). That only ever surfaced on Windows CI
+# (test_identity_is_stable_during_concurrent_status_refreshes), because the dashboard's
+# ThreadingHTTPServer calls ensure_device_identity() from a worker thread per request.
+# This lock makes the intra-process guarantee explicit and real on every platform
+# instead of leaning on flock's incidental scope; it is a harmless no-op on POSIX, which
+# already had this guarantee. It does not replace the file lock below, which is still
+# what keeps separate MemorySafe processes on this machine from colliding.
+_IDENTITY_LOCK = threading.Lock()
 
 
 def utc_now() -> str:
@@ -95,29 +110,32 @@ def ensure_device_identity(state_dir: Path | None = None) -> dict[str, str]:
     _chmod(directory, 0o700)
     identity_file = directory / "device.json"
     lock_file = directory / ".device.lock"
-    with lock_file.open("a+", encoding="utf-8") as lock:
-        _chmod(lock_file, 0o600)
-        _lock_exclusive(lock)
-        try:
-            existing = read_private_json(identity_file)
-            installation_id = str(existing.get("installation_id", ""))
+    # Held for the whole file-lock critical section below, not just around
+    # _lock_exclusive/_unlock -- see the comment on _IDENTITY_LOCK's definition.
+    with _IDENTITY_LOCK:
+        with lock_file.open("a+", encoding="utf-8") as lock:
+            _chmod(lock_file, 0o600)
+            _lock_exclusive(lock)
             try:
-                uuid.UUID(installation_id)
-            except (ValueError, AttributeError):
-                installation_id = str(uuid.uuid4())
+                existing = read_private_json(identity_file)
+                installation_id = str(existing.get("installation_id", ""))
+                try:
+                    uuid.UUID(installation_id)
+                except (ValueError, AttributeError):
+                    installation_id = str(uuid.uuid4())
 
-            identity = {
-                "schema_version": "1",
-                "installation_id": installation_id,
-                "created_at": str(existing.get("created_at") or utc_now()),
-                "platform": platform.system().lower() or "unknown",
-                "architecture": platform.machine().lower() or "unknown",
-                "surface_mode": "desktop-hosted",
-            }
-            write_private_json(identity_file, identity)
-            return identity
-        finally:
-            _unlock(lock)
+                identity = {
+                    "schema_version": "1",
+                    "installation_id": installation_id,
+                    "created_at": str(existing.get("created_at") or utc_now()),
+                    "platform": platform.system().lower() or "unknown",
+                    "architecture": platform.machine().lower() or "unknown",
+                    "surface_mode": "desktop-hosted",
+                }
+                write_private_json(identity_file, identity)
+                return identity
+            finally:
+                _unlock(lock)
 
 
 def masked_device_id(identity: dict[str, str]) -> str:

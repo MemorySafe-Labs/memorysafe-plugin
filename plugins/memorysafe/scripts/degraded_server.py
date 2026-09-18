@@ -243,6 +243,10 @@ def _handle(message):
 
 
 def main():
+    # Python opens stdout with newline=None on Windows, which rewrites every "\n" this
+    # process writes to "\r\n" -- and stdout is the JSON-RPC channel every reply travels
+    # over. Reconfigured first, before the loop below can write anything.
+    sys.stdout.reconfigure(newline="")
     _log("started in limited mode: " + os.environ.get("MEMORYSAFE_DEGRADED_REASON", "unknown"))
     for line in sys.stdin:
         line = line.strip()

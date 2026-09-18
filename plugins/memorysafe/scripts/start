@@ -31,6 +31,9 @@ export MEMORYSAFE_STATE_DIR="${MEMORYSAFE_STATE_DIR:-$DATA_ROOT/runtime-state}"
 # Only the plugin's own code. An inherited PYTHONPATH would put the user's packages ahead
 # of the hash-pinned ones in the runtime, and the lock would no longer decide what runs.
 export PYTHONPATH="$PLUGIN_DIR/src"
+# An activated virtualenv in the user's shell is inherited here, and uv would resolve
+# against it instead of the private runtime. Same reason PYTHONPATH is overwritten above.
+unset VIRTUAL_ENV
 # tiktoken downloads its encoding on first use and caches it in the system temp folder,
 # so it downloaded again whenever that was cleared, while the install guide promises that
 # nothing leaves this computer after the first start. In the data root, one copy lasts.
@@ -120,6 +123,7 @@ fi
 # --no-bin keeps uv from linking python3.12 into ~/.local/bin, outside the MemorySafe folder.
 if UV=$(/bin/sh "$SCRIPT_DIR/ensure_uv" </dev/null 2>>"$INSTALL_LOG") \
   && UV_PYTHON_INSTALL_DIR="$DATA_ROOT/python" UV_CACHE_DIR="$DATA_ROOT/cache/uv" \
+    UV_PYTHON_PREFERENCE=only-managed \
     "$UV" python install --no-bin "$PYTHON_VERSION" </dev/null >>"$INSTALL_LOG" 2>&1 \
   && MANAGED_PYTHON=$(UV_PYTHON_INSTALL_DIR="$DATA_ROOT/python" \
     "$UV" python find --managed-python "$PYTHON_VERSION" </dev/null 2>>"$INSTALL_LOG"); then

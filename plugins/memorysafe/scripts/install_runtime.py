@@ -7,11 +7,10 @@ can survive beside a missing package.  This helper serializes builders, validate
 staged venv, then publishes it with directory renames so launchers see either the
 old complete runtime or the new complete runtime.
 
-Two builders share that lock and publish step. The pip builder is the original, and it
-is still what the Windows launcher and install_windows.py call. The uv builder serves
-the macOS and Linux plugins: uv brings its own Python, so nobody installs one first,
-and the runtime holds only the hash-pinned dependencies -- the MemorySafe code runs
-from the plugin folder -- so it is keyed by requirements.lock rather than by version.
+The uv builder serves every plugin platform: uv brings its own Python, so nobody
+installs one first, and the runtime holds only the hash-pinned dependencies -- the
+MemorySafe code runs from the plugin folder -- so it is keyed by requirements.lock
+rather than by version.
 
 Runs on Python 3.8 with the standard library only: the plugin's pending-mode proxy runs
 it on whatever python3 the machine already has.
@@ -23,6 +22,7 @@ import argparse
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -56,22 +56,6 @@ def runtime_python(runtime_dir: Path) -> Path:
     if os.name == "nt":
         return runtime_dir / "Scripts" / "python.exe"
     return runtime_dir / "bin" / "python"
-
-
-def runtime_is_ready(runtime_dir: Path, version: str, *, verify_import: bool = False) -> bool:
-    python = runtime_python(runtime_dir)
-    if not python.is_file() or not (runtime_dir / f"version-{version}").is_file():
-        return False
-    if not verify_import:
-        return True
-    completed = subprocess.run(
-        [str(python), "-c", "import memorysafe_chatgpt.server, mcp, tiktoken"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    return completed.returncode == 0
 
 
 def _lock_age(lock_dir: Path) -> float:
@@ -113,34 +97,11 @@ def _run(command: list, environment: dict | None = None) -> None:
     subprocess.run(command, check=True, env=environment)
 
 
-def _build_staged_runtime(plugin_dir: Path, staging: Path, version: str) -> None:
-    _run([sys.executable, "-m", "venv", str(staging)])
-    python = runtime_python(staging)
-    _run(
-        [
-            str(python),
-            "-m",
-            "pip",
-            "install",
-            "--disable-pip-version-check",
-            "--upgrade",
-            "pip",
-            "setuptools",
-            "wheel",
-        ]
-    )
-    _run(
-        [
-            str(python),
-            "-m",
-            "pip",
-            "install",
-            "--disable-pip-version-check",
-            str(plugin_dir),
-        ]
-    )
-    _run([str(python), "-c", "import memorysafe_chatgpt.server, mcp, tiktoken"])
-    (staging / f"version-{version}").write_text("ready\n", encoding="utf-8")
+def _force_writable(function, path, _excinfo):
+    # uv hardlinks venv files from its cache and they arrive read-only; on Windows
+    # the delete then fails with PermissionError. Clear the flag and retry once.
+    os.chmod(path, stat.S_IWRITE)
+    function(path)
 
 
 def _publish(staging: Path, runtime_dir: Path) -> None:
@@ -156,40 +117,7 @@ def _publish(staging: Path, runtime_dir: Path) -> None:
             os.replace(backup, runtime_dir)
         raise
     if backup.exists():
-        shutil.rmtree(backup, ignore_errors=True)
-
-
-def install_runtime(plugin_dir: Path, runtime_dir: Path, version: str) -> bool:
-    """Ensure a complete runtime exists. Return True only when this call built it."""
-
-    plugin_dir = plugin_dir.expanduser().resolve()
-    runtime_dir = runtime_dir.expanduser().resolve()
-    if not (plugin_dir / "pyproject.toml").is_file():
-        raise FileNotFoundError(f"MemorySafe package is missing: {plugin_dir / 'pyproject.toml'}")
-    runtime_dir.parent.mkdir(parents=True, exist_ok=True)
-    lock_dir = runtime_dir.with_name(f".{runtime_dir.name}.install.lock")
-    builder = _acquire_lock(lock_dir, lambda: runtime_is_ready(runtime_dir, version))
-    if not builder:
-        print(f"MemorySafe runtime {version} was completed by another process.")
-        return False
-
-    staging: Path | None = None
-    try:
-        if runtime_is_ready(runtime_dir, version, verify_import=True):
-            print(f"MemorySafe runtime {version} is already ready.")
-            return False
-        staging = Path(
-            tempfile.mkdtemp(prefix=f".{runtime_dir.name}-build-", dir=str(runtime_dir.parent))
-        )
-        _build_staged_runtime(plugin_dir, staging, version)
-        _publish(staging, runtime_dir)
-        staging = None
-        print(f"MemorySafe runtime {version} is ready.")
-        return True
-    finally:
-        if staging is not None:
-            shutil.rmtree(staging, ignore_errors=True)
-        shutil.rmtree(lock_dir, ignore_errors=True)
+        shutil.rmtree(backup, onerror=_force_writable)
 
 
 def read_runtime_env(plugin_dir: Path) -> dict:
@@ -217,9 +145,13 @@ def _uv_environment(data_root: Path) -> dict:
 
 
 def _ensure_uv(plugin_dir: Path, data_root: Path) -> str:
-    # POSIX only for now. The Windows port adds ensure_uv.ps1 and chooses by os.name.
+    scripts = plugin_dir / "scripts"
+    if os.name == "nt":
+        command = [str(scripts / "ensure_uv.cmd")]
+    else:
+        command = ["/bin/sh", str(scripts / "ensure_uv")]
     completed = subprocess.run(
-        ["/bin/sh", str(plugin_dir / "scripts" / "ensure_uv")],
+        command,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         env=_uv_environment(data_root),
@@ -316,27 +248,17 @@ def install_uv_runtime(plugin_dir: Path, data_root: Path) -> bool:
         return True
     finally:
         if staging is not None:
-            shutil.rmtree(staging, ignore_errors=True)
+            shutil.rmtree(staging, onerror=_force_writable)
         shutil.rmtree(lock_dir, ignore_errors=True)
 
 
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build MemorySafe's private Python runtime.")
-    parser.add_argument("--builder", choices=("pip", "uv"), default="pip")
     parser.add_argument("--plugin-dir", type=Path, required=True)
-    parser.add_argument("--runtime-dir", type=Path)
-    parser.add_argument("--version")
-    parser.add_argument("--data-root", type=Path)
+    parser.add_argument("--data-root", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        if args.builder == "uv":
-            if args.data_root is None:
-                parser.error("--builder uv needs --data-root")
-            install_uv_runtime(args.plugin_dir, args.data_root)
-        else:
-            if args.runtime_dir is None or args.version is None:
-                parser.error("--builder pip needs --runtime-dir and --version")
-            install_runtime(args.plugin_dir, args.runtime_dir, args.version)
+        install_uv_runtime(args.plugin_dir, args.data_root)
     except BuildFailure as failure:
         print(f"MemorySafe runtime install failed: {failure}", file=sys.stderr)
         return failure.code

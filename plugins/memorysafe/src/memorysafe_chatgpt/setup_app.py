@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -194,6 +195,15 @@ def save_connection(paths: SetupPaths, runtime_key: str, tunnel_id: str) -> None
         _write_private_text(paths.secret_file, clean_key)
     elif not paths.secret_file.is_file():
         raise ValueError("A runtime key is required for the first connection.")
+
+    if sys.platform != "darwin":
+        # The tunnel connector is launchd-managed, and launchd -- along with
+        # os.getuid(), which the kickstart command below needs -- exists only on
+        # macOS. Guided setup runs this same save_connection() on every platform,
+        # and os.getuid() doesn't exist on Windows at all: it raised an uncaught
+        # AttributeError there, which the (OSError, TimeoutExpired) guard below
+        # was never meant to (and cannot) catch, since it never gets that far.
+        return
 
     try:
         subprocess.run(
