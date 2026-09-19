@@ -68,7 +68,18 @@ def dashboard_html(local_api_token: str | None = None) -> str:
     .setup-link, .support-bundle { display: none; text-decoration: none; }
     .refresh:hover, .setup-link:hover, .support-bundle:hover { border-color: rgba(25, 228, 233, .38); color: var(--text); }
     .refresh:disabled { opacity: .45; cursor: wait; }
-    .support-result { display: none; margin-top: 10px; padding: 10px 12px; border: 1px solid rgba(82,220,136,.18); border-radius: 9px; background: rgba(82,220,136,.05); color: #9fcdb0; font-size: 9px; overflow-wrap: anywhere; }
+    .support-result { margin: 0 0 10px; padding: 10px 12px; border: 1px solid rgba(82,220,136,.18); border-radius: 9px; background: rgba(82,220,136,.05); color: #9fcdb0; font-size: 10px; overflow-wrap: anywhere; }
+    /* Collapsed rather than display:none. Screen readers only announce a live region that
+       was already in the page when its text changed, so this one is never taken out. */
+    .support-result:empty { margin: 0; padding: 0; border: 0; }
+    .support-result.bad { border-color: rgba(244,183,94,.3); background: rgba(244,183,94,.06); color: #f3d3a0; }
+    .support-result a { color: var(--cyan); }
+    .report-form { margin: 0 0 10px; padding: 11px 12px; border: 1px solid rgba(25,228,233,.35); border-radius: 9px; background: rgba(25,228,233,.06); }
+    .report-form label { display: block; color: #dce5ed; font-size: 10px; font-weight: 700; }
+    .report-form label span { display: block; margin-top: 3px; color: var(--dim); font-size: 8px; font-weight: 400; }
+    .report-form textarea { display: block; width: 100%; margin: 8px 0; padding: 8px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2); color: var(--text); font-family: inherit; font-size: 10px; line-height: 1.45; resize: vertical; }
+    .report-form textarea:focus { outline: none; border-color: rgba(25,228,233,.5); }
+    .report-actions { display: flex; gap: 7px; flex-wrap: wrap; }
     .hero {
       margin-top: 17px; padding: 17px; display: grid; grid-template-columns: 1fr auto;
       gap: 20px; align-items: center; border: 1px solid var(--border); border-radius: 14px;
@@ -266,6 +277,18 @@ def dashboard_html(local_api_token: str | None = None) -> str:
       <button class="support-bundle" id="support-bundle" type="button">Report a problem</button>
       <button class="refresh" id="refresh" type="button">Refresh</button>
     </header>
+    <!-- Right under the button that fills it. It used to sit at the foot of the page, below
+         "Technical detail", so a tester clicked Report a problem and saw nothing happen. -->
+    <div class="report-form" id="report-form" hidden>
+      <label for="report-description">What went wrong?
+        <span>Optional. It goes into the report file and the email. Leave out passwords and other people's details.</span></label>
+      <textarea id="report-description" maxlength="4000" rows="3" placeholder="For example: I asked Claude to remember my deadline and it said MemorySafe wasn't available."></textarea>
+      <div class="report-actions">
+        <button class="agent-connect" id="report-send" type="button">Create report and email it</button>
+        <button class="agents-no" id="report-cancel" type="button">Cancel</button>
+      </div>
+    </div>
+    <div class="support-result" id="support-result" role="status"></div>
 
     <section class="hero">
       <div>
@@ -360,7 +383,6 @@ def dashboard_html(local_api_token: str | None = None) -> str:
       <p id="tech-hypothetical">—</p>
       <p class="store-path">Reading <code id="database-path">—</code></p>
     </details>
-    <div class="support-result" id="support-result"></div>
     <div class="error" id="error">The dashboard could not refresh. Your stored memories were not changed.</div>
   </main>
 
@@ -429,7 +451,7 @@ def dashboard_html(local_api_token: str | None = None) -> str:
               "Content-Type": "application/json",
               "X-MemorySafe-Setup-Token": localApiToken,
             },
-            body: "{}",
+            body: JSON.stringify({ description: String(params?.arguments?.description ?? "") }),
           }).then(async (response) => {
             const payload = await response.json();
             if (!response.ok) throw new Error(payload?.error ?? "Support bundle could not be created");
@@ -938,21 +960,103 @@ def dashboard_html(local_api_token: str | None = None) -> str:
       }
     });
 
-    byId("support-bundle").addEventListener("click", async () => {
-      const button = byId("support-bundle");
+    // Report a problem used to stop at a ZIP: no destination, and nowhere to say what had
+    // happened, so a tester with a problem had nothing to do with it. It now asks what
+    // went wrong, saves the bundle, and opens an email to support that the person reviews,
+    // attaches the file to and sends. Nothing is sent without them.
+    byId("support-bundle").addEventListener("click", () => {
+      const form = byId("report-form");
+      form.hidden = !form.hidden;
+      if (!form.hidden) {
+        byId("support-result").textContent = "";
+        byId("report-description").focus();
+      }
+    });
+    byId("report-cancel").addEventListener("click", () => { byId("report-form").hidden = true; });
+
+    byId("report-send").addEventListener("click", async () => {
+      const button = byId("report-send");
       const result = byId("support-result");
+      const description = byId("report-description").value;
       button.disabled = true;
       button.textContent = "Creating…";
+      result.className = "support-result";
+      // A retry must not leave the last attempt's message up, restyled, while this one runs.
+      result.textContent = "";
       try {
-        const payload = await request("tools/call", { name: "memorysafe_support_bundle", arguments: {} });
-        result.textContent = `Privacy-safe support bundle created at ${String(payload?.path ?? "the local support folder")}. Nothing was uploaded.`;
-        result.style.display = "block";
-      } catch (_) {
-        byId("error").textContent = "The support bundle could not be created. No information was uploaded.";
-        byId("error").style.display = "block";
+        const payload = await request("tools/call", { name: "memorysafe_support_bundle", arguments: { description } });
+        const fileName = String(payload?.file_name ?? "");
+        const savedAt = String(payload?.path ?? "the local support folder");
+        let downloaded = false;
+        // The bundle is written under MemorySafe's own data folder, which on Windows is a
+        // hidden AppData path (inside the Store app's container, for Claude Desktop) that
+        // nobody finds. Handing it to the browser puts it in Downloads, where people look.
+        if (standalone && fileName) {
+          try {
+            const response = await fetch("/api/support-bundle/download", {
+              method: "POST",
+              cache: "no-store",
+              headers: { "Content-Type": "application/json", "X-MemorySafe-Setup-Token": localApiToken },
+              body: JSON.stringify({ name: fileName }),
+            });
+            if (response.ok) {
+              const link = document.createElement("a");
+              link.href = URL.createObjectURL(await response.blob());
+              link.download = fileName;
+              document.body.append(link);
+              link.click();
+              link.remove();
+              setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+              downloaded = true;
+            }
+          } catch (_) {
+            // Fall through to naming the folder it was saved in.
+          }
+        }
+        // The page can't tell whether the browser kept the file: Safari may ask first, and a
+        // browser set to ask where to save can be cancelled. So the copy on disk stays named.
+        const where = downloaded
+          ? `your Downloads folder (${fileName}; if it isn't there, a copy is at ${savedAt})`
+          : savedAt;
+        const email = payload?.email;
+        // Only ever a mailto: link, never another scheme, whatever the payload says.
+        if (typeof email?.mailto === "string" && email.mailto.startsWith("mailto:")) {
+          const lead = document.createElement("strong");
+          lead.textContent = "Almost done. ";
+          const again = document.createElement("a");
+          again.href = email.mailto;
+          again.textContent = `No email appeared? Open it again, or write to ${email.to}.`;
+          result.replaceChildren(
+            lead,
+            document.createTextNode(
+              `An email to ${email.to} has opened. Attach the report from ${where}, then press Send. ` +
+              "It holds status, counts and sanitized error signatures only: no memories, no conversations, no keys. Nothing is sent until you send it. "
+            ),
+            again,
+          );
+          const open = document.createElement("a");
+          open.href = email.mailto;
+          document.body.append(open);
+          open.click();
+          open.remove();
+        } else {
+          result.textContent = `Support bundle saved to ${where}. It holds no memories, conversations or keys, and nothing was uploaded.`;
+        }
+        byId("report-form").hidden = true;
+        byId("report-description").value = "";
+      } catch (error) {
+        // A fetch that never reached the dashboard throws a TypeError, and an answer from
+        // something else on the port fails to parse. Anything else is the dashboard's own
+        // reason, such as a session that expired when it restarted: reloading the page fixes
+        // that, and restarting the assistant does not.
+        const unreachable = error instanceof TypeError || error instanceof SyntaxError;
+        result.className = "support-result bad";
+        result.textContent = `The report could not be created. No information was uploaded. ${
+          unreachable ? "The dashboard may have stopped: restart your assistant and try again, or write to contact@memorysafe.ca." : String(error?.message ?? "")
+        }`;
       } finally {
         button.disabled = false;
-        button.textContent = "Report a problem";
+        button.textContent = "Create report and email it";
       }
     });
 

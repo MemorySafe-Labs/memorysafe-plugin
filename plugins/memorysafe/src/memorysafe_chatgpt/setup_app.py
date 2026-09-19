@@ -15,12 +15,12 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 from . import agents as agents_module
 from .bootstrap_catalog import VERSION
 from .dashboard import dashboard_html, panel_html
-from .doctor import create_support_bundle, run_doctor
+from .doctor import create_support_bundle, find_support_bundle, run_doctor
 from .device import (
     ensure_device_identity,
     masked_device_id,
@@ -151,8 +151,44 @@ def dashboard_payload(paths: SetupPaths) -> dict[str, Any]:
     return payload
 
 
-def support_bundle_payload(paths: SetupPaths) -> dict[str, Any]:
-    bundle = create_support_bundle(paths.install_root)
+# Where a report goes. Nothing is sent from here: the dashboard opens an email draft
+# the person reviews, attaches the bundle to and sends themselves.
+SUPPORT_EMAIL = "contact@memorysafe.ca"
+
+
+def _report_email(paths: SetupPaths, file_name: str, description: str) -> dict[str, str]:
+    """The draft that turns "a ZIP in Downloads" into an actual report.
+
+    Report a problem used to stop at the file, with no destination and no place to say
+    what happened, so a tester who hit a problem had nothing to do with it. A browser
+    cannot attach a file to a mailto draft, so the body says which one to attach.
+    """
+
+    device = masked_device_id(ensure_device_identity(paths.state_dir))
+    subject = f"MemorySafe problem report · {device} · {VERSION}"
+    body = "\n".join(
+        (
+            "What went wrong:",
+            # A mailto URL has practical length limits; the full text is in the bundle.
+            description[:1500] if description else "(not described)",
+            "",
+            f"Please attach {file_name} from your Downloads folder before sending.",
+            "It holds status, counts and sanitized error signatures only: no memories, "
+            "no conversations, no keys.",
+            "",
+            f"MemorySafe {VERSION} · {device} · {sys.platform}",
+        )
+    )
+    # quote, not quote_plus: mail clients show a "+" literally where a space was meant.
+    query = urlencode({"subject": subject, "body": body}, quote_via=quote)
+    return {"to": SUPPORT_EMAIL, "subject": subject, "mailto": f"mailto:{SUPPORT_EMAIL}?{query}"}
+
+
+def support_bundle_payload(paths: SetupPaths, description: str = "") -> dict[str, Any]:
+    from .doctor import DESCRIPTION_LIMIT
+
+    description = str(description or "").strip()[:DESCRIPTION_LIMIT]
+    bundle = create_support_bundle(paths.install_root, description=description)
     try:
         display_path = f"~/{bundle.relative_to(Path.home())}"
     except ValueError:
@@ -160,6 +196,9 @@ def support_bundle_payload(paths: SetupPaths) -> dict[str, Any]:
     return {
         "created": True,
         "path": display_path,
+        # The dashboard hands this name back to /api/support-bundle/download.
+        "file_name": bundle.name,
+        "email": _report_email(paths, bundle.name, description),
         "privacy": {
             "memory_contents_included": False,
             "conversation_history_included": False,
@@ -495,7 +534,24 @@ class SetupHandler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "result": result, "dashboard": dashboard_payload(self.paths)})
                 return
             elif path == "/api/support-bundle":
-                self._json({"ok": True, **support_bundle_payload(self.paths)})
+                self._json({"ok": True, **support_bundle_payload(self.paths, str(payload.get("description", "")))})
+                return
+            elif path == "/api/support-bundle/download":
+                # "Report a problem" wrote the ZIP under a hidden AppData folder and said
+                # so at the foot of the page; a tester clicked it and saw nothing. The page
+                # now fetches it from here and the browser saves it to Downloads.
+                bundle = find_support_bundle(self.paths.install_root, str(payload.get("name", "")))
+                if bundle is None:
+                    self._json({"error": "That support bundle was not found."}, 404)
+                    return
+                data = bundle.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Content-Disposition", f'attachment; filename="{bundle.name}"')
+                self._security_headers()
+                self.end_headers()
+                self.wfile.write(data)
                 return
             elif path == "/api/agents/connect":
                 # Runs an assistant's own plugin installer. The token check above is what

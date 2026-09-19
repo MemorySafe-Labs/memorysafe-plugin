@@ -906,12 +906,37 @@ def _error_events(paths: DoctorPaths) -> list[dict[str, Any]]:
     return events[-MAX_ERROR_EVENTS:]
 
 
+# Exactly the names create_support_bundle writes, so find_support_bundle can serve nothing
+# else: no other file, no path, no "..". fullmatch and [0-9] because `$` lets a trailing
+# newline through and `\d` takes any script's digits, and a served name goes into a header.
+SUPPORT_BUNDLE_NAME = re.compile(r"MemorySafe-Support-[0-9]{8}-[0-9]{6}\.zip")
+
+
+def _support_bundle_dir(paths: DoctorPaths) -> Path:
+    return paths.state_dir / "support-bundles"
+
+
+def find_support_bundle(install_root: Path | None, name: str) -> Path | None:
+    """The bundle called `name` in this install's support-bundles folder, if it is one."""
+
+    if not SUPPORT_BUNDLE_NAME.fullmatch(name):
+        return None
+    candidate = _support_bundle_dir(DoctorPaths.from_install_root(install_root)) / name
+    return candidate if candidate.is_file() else None
+
+
+# What the person typed into "What went wrong?". Their own words, which they chose to
+# include; capped so a pasted log cannot turn the bundle into something else.
+DESCRIPTION_LIMIT = 4000
+
+
 def create_support_bundle(
     install_root: Path | None = None,
     output_path: Path | None = None,
+    description: str | None = None,
 ) -> Path:
     paths = DoctorPaths.from_install_root(install_root)
-    support_dir = paths.state_dir / "support-bundles"
+    support_dir = _support_bundle_dir(paths)
     support_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     target = (output_path or support_dir / f"MemorySafe-Support-{stamp}.zip").expanduser().resolve()
@@ -925,10 +950,15 @@ def create_support_bundle(
         "counts, and sanitized error signatures. It does not contain memory contents, "
         "conversation history, runtime keys, or complete tunnel identifiers. Nothing was uploaded.\n"
     )
+    written = (description or "").strip()[:DESCRIPTION_LIMIT]
+    if written:
+        readme += "what-went-wrong.txt is the description the person typed when creating this report.\n"
     with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("README.txt", readme)
         archive.writestr("doctor.json", json.dumps(report, indent=2, sort_keys=True) + "\n")
         archive.writestr("sanitized-errors.json", json.dumps(errors, indent=2, sort_keys=True) + "\n")
+        if written:
+            archive.writestr("what-went-wrong.txt", written + "\n")
     os.chmod(temporary, 0o600)
     temporary.replace(target)
     os.chmod(target, 0o600)
