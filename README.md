@@ -1,4 +1,4 @@
-# MemorySafe 0.4.2
+# MemorySafe 0.4.3
 
 Private, governed memory for Claude Code, Claude Desktop and Codex, kept in one SQLite
 file on your own computer. macOS, Linux and Windows.
@@ -6,8 +6,9 @@ file on your own computer. macOS, Linux and Windows.
 ## Before you start
 
 Whatever you install below: **restart the assistant afterwards.** Its first start then
-builds a private Python runtime — a minute or two, once. When that finishes,
-<http://127.0.0.1:8765/dashboard> opens on this computer. That is how you know it worked.
+builds a private Python runtime — a minute or two, once. Within seconds,
+<http://127.0.0.1:8765/dashboard> shows that setup's progress on this computer, and it turns
+into your dashboard when setup finishes. That page is how you know it worked.
 
 ## Claude Code
 

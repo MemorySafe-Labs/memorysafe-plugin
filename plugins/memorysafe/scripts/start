@@ -43,6 +43,8 @@ mkdir -p "$DATA_ROOT/data" "$MEMORYSAFE_STATE_DIR/logs" 2>/dev/null || true
 RUNTIME_DIR="$DATA_ROOT/runtime/$RUNTIME_KEY"
 RUNTIME_PYTHON="$RUNTIME_DIR/bin/python"
 INSTALL_LOG="$MEMORYSAFE_STATE_DIR/logs/claude-install.log"
+# The dashboard's port. During a first start the bootstrap proxy serves setup progress there.
+SETUP_PORT="${MEMORYSAFE_SETUP_PORT:-8765}"
 
 quote() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
@@ -61,7 +63,7 @@ write_cli_shim() {
     echo "export PYTHONPATH=$(quote "$PLUGIN_DIR/src")"
     echo "export TIKTOKEN_CACHE_DIR=$(quote "$DATA_ROOT/cache/tiktoken")"
     echo "if [ ! -x $(quote "$RUNTIME_PYTHON") ]; then"
-    echo "  echo 'MemorySafe is still finishing its one-time setup. Try again in a minute.' >&2"
+    echo "  echo 'MemorySafe is still finishing its one-time setup. Progress: http://127.0.0.1:$SETUP_PORT/dashboard' >&2"
     echo '  exit 1'
     echo 'fi'
     echo "exec $(quote "$RUNTIME_PYTHON") -m memorysafe_chatgpt.cli \"\$@\""

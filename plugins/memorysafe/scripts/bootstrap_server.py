@@ -19,6 +19,8 @@ python3 the machine already has.
 
 from __future__ import annotations
 
+import functools
+import importlib.util
 import json
 import os
 import subprocess
@@ -35,6 +37,9 @@ from memorysafe_chatgpt.bootstrap_catalog import (
     TOOLS,
     VERSION,
 )
+from memorysafe_chatgpt.progress_page import ProgressPage, dashboard_url, render_page, setup_port
+from memorysafe_chatgpt.provisioning import GENERIC_FAILURE, describe, failure_reason
+from memorysafe_chatgpt.provisioning import read as read_setup_status
 
 
 _CHILD_INITIALIZE_ID = "memorysafe-bootstrap-initialize"
@@ -57,16 +62,14 @@ def _detached_spawn_options():
     return {"start_new_session": True}
 
 
-SETUP_IN_PROGRESS_MESSAGE = (
-    "MemorySafe is finishing its one-time setup. Nothing was saved; try again in a minute."
-)
-# install_runtime.py exit codes, named as degraded_server.py explains them.
-_BUILD_FAILURE_REASONS = {
-    2: "download_failed",
-    3: "uv_checksum_mismatch",
-    4: "install_root_unwritable",
-}
+# install_runtime.py's exit code for a data folder it cannot write, reused when the install
+# log itself cannot be opened. provisioning.failure_reason names every exit code.
 _EXIT_UNWRITABLE = 4
+# What the page and the doctor say if degraded_server.explain cannot be loaded at all.
+_UNEXPLAINED_FAILURE: Tuple[str, List[str]] = (
+    "MemorySafe could not finish its one-time setup.",
+    ["Ask your assistant to run the MemorySafe doctor."],
+)
 
 
 def _log(message: object) -> None:
@@ -117,17 +120,66 @@ def _runtime_child_command() -> List[str]:
     return [interpreter, "-m", "memorysafe_chatgpt.claude_launcher"]
 
 
-def _setup_in_progress_reply(message: Dict[str, Any]) -> Dict[str, Any]:
-    if message.get("method") == "tools/call":
-        return _result(
-            message["id"],
-            {"content": [{"type": "text", "text": SETUP_IN_PROGRESS_MESSAGE}], "isError": True},
-        )
+def _install_log_path() -> Path:
+    state_dir = Path(
+        os.environ.get("MEMORYSAFE_STATE_DIR")
+        or Path(os.environ["MEMORYSAFE_INSTALL_ROOT"]) / "runtime-state"
+    )
+    return state_dir / "logs" / "claude-install.log"
+
+
+@functools.lru_cache(maxsize=1)
+def _load_degraded_explain():
+    """Load degraded_server.py once and cache its explain function.
+
+    The page polls _explain_failure every 2s while the build is failed, and the doctor
+    calls it too; re-parsing and re-executing the whole module for a pure function lookup
+    on every one of those was wasteful. degraded_server.py does not change while this
+    process runs, so the loaded function -- not its result, which explain() promises is a
+    fresh list every call -- is what gets cached.
+
+    Loaded by path: this proxy runs as a script, where its folder is on sys.path, but the
+    tests load it under another name, where a plain sibling import would fail. A failed
+    load is not cached (lru_cache does not memoize a raised exception), so the next call
+    retries rather than latching onto _UNEXPLAINED_FAILURE forever.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "memorysafe_degraded_explain", str(SCRIPT_DIR / "degraded_server.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.explain
+
+
+def _explain_failure(reason: str) -> Tuple[str, List[str]]:
+    """degraded_server's words for a failed build, so the page and limited mode agree."""
+    try:
+        explain = _load_degraded_explain()
+        return explain(reason)
+    except Exception as error:
+        _log(f"could not load the setup failure wording: {error}")
+        return _UNEXPLAINED_FAILURE
+
+
+def _tool_name(message: Dict[str, Any]) -> Optional[str]:
+    params = message.get("params")
+    return params.get("name") if isinstance(params, dict) else None
+
+
+def _tool_result(report: Dict[str, Any]) -> Dict[str, Any]:
+    # The shape degraded_server._handle returns, so the assistant reads one format whether
+    # this proxy or limited mode answered the doctor.
     return {
-        "jsonrpc": "2.0",
-        "id": message["id"],
-        "error": {"code": -32603, "message": SETUP_IN_PROGRESS_MESSAGE},
+        "content": [{"type": "text", "text": json.dumps(report, indent=2)}],
+        "structuredContent": report,
+        "isError": False,
     }
+
+
+def _setup_in_progress_reply(message: Dict[str, Any], text: str) -> Dict[str, Any]:
+    if message.get("method") == "tools/call":
+        return _result(message["id"], {"content": [{"type": "text", "text": text}], "isError": True})
+    return {"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32603, "message": text}}
 
 
 class BootstrapProxy:
@@ -146,7 +198,14 @@ class BootstrapProxy:
         self._deadline = float(
             os.environ.get("MEMORYSAFE_PENDING_DEADLINE_SECONDS", PENDING_DEADLINE_SECONDS)
         )
+        self._pending_mode = pending
+        self._started_at = time.time()
+        # Set when this proxy's own build fails, for a page with no builder's record to read.
+        self._failure_reason: Optional[str] = None
+        self._page: Optional[ProgressPage] = None
         if pending:
+            self._page = ProgressPage(setup_port(), self._setup_status, self._render_page)
+            self._page.start()
             threading.Thread(target=self._build_then_start, name="memorysafe-build", daemon=True).start()
             threading.Thread(
                 target=self._expire_waiting_requests, name="memorysafe-deadline", daemon=True
@@ -178,14 +237,93 @@ class BootstrapProxy:
             os.environ["MEMORYSAFE_INSTALL_ROOT"],
         ]
 
+    def _setup_status(self) -> Dict[str, Any]:
+        """Where the first-start build is: the builder's record, else this proxy's own failure."""
+        try:
+            key = _read_runtime_env().get("RUNTIME_KEY", "")
+        except OSError:
+            key = ""
+        status = read_setup_status(
+            os.environ.get("MEMORYSAFE_INSTALL_ROOT", ""), key, fallback_started_at=self._started_at
+        )
+        if status["status"] == "unknown" and self._failure_reason is not None:
+            status = dict(status, status="failed", failure=self._failure_reason)
+        return status
+
+    def _render_page(self, status: Dict[str, Any]) -> str:
+        explanation = None
+        if status["status"] == "failed":
+            explanation = _explain_failure(status["failure"] or GENERIC_FAILURE)
+        try:
+            install_log: Optional[str] = str(_install_log_path())
+        except KeyError:
+            install_log = None
+        return render_page(status, explanation=explanation, install_log=install_log)
+
+    def _setup_message(self) -> str:
+        return "%s Nothing was saved; try again shortly. Progress: %s" % (
+            describe(self._setup_status()),
+            dashboard_url(setup_port()),
+        )
+
+    def _provisioning_report(self, status: Dict[str, Any]) -> Dict[str, Any]:
+        url = dashboard_url(setup_port())
+        if status["status"] == "failed":
+            headline, actions = _explain_failure(status["failure"] or GENERIC_FAILURE)
+            what_to_do = actions + ["Details: %s" % url]
+        elif status["status"] == "interrupted":
+            headline = describe(status)
+            what_to_do = [
+                "Quit your assistant completely and reopen it; setup resumes.",
+                "Watch progress at %s" % url,
+            ]
+        else:
+            headline = describe(status)
+            what_to_do = [
+                "Wait: this setup happens once, and MemorySafe starts on its own when it finishes.",
+                "Watch progress at %s" % url,
+            ]
+        return {
+            "status": "provisioning",
+            "memorysafe_working": False,
+            "headline": headline,
+            "what_to_do": what_to_do,
+            "progress": status,
+            "dashboard": url,
+            "note": (
+                "No memories have been lost. MemorySafe has not started yet, so nothing was "
+                "written. Any existing store is untouched."
+            ),
+            "for_the_assistant": (
+                "Tell the user the headline in your own words and give them the progress "
+                "address. Setup finishes on its own: do not suggest reinstalling or "
+                "downloading MemorySafe again."
+            ),
+        }
+
+    def _answer_doctor_during_setup(self, request_id: object) -> bool:
+        """Answer the doctor here while the runtime builds; False once the real server should.
+
+        The doctor is the tool INSTALL.md sends people to when a fresh install does not
+        respond, and it waited in the same queue as everything else, then said "try again".
+        """
+        with self._state_lock:
+            if self._child_active or self._closing:
+                return False
+        status = self._setup_status()
+        if status["status"] == "ready":
+            return False
+        self._write_host(_result(request_id, _tool_result(self._provisioning_report(status))))
+        return True
+
+    def _stop_page(self) -> None:
+        if self._page is not None:
+            self._page.stop()
+
     def _build_then_start(self) -> None:
         log_path: Optional[Path] = None
         try:
-            state_dir = Path(
-                os.environ.get("MEMORYSAFE_STATE_DIR")
-                or Path(os.environ["MEMORYSAFE_INSTALL_ROOT"]) / "runtime-state"
-            )
-            log_path = state_dir / "logs" / "claude-install.log"
+            log_path = _install_log_path()
             try:
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 log = log_path.open("ab")
@@ -212,11 +350,16 @@ class BootstrapProxy:
             if code == 0:
                 command = _runtime_child_command()
                 extra: Dict[str, str] = {}
+                # The real server's launcher starts the dashboard on this same address, and
+                # only if the address is free, so the page leaves first rather than racing it.
+                self._stop_page()
             else:
+                reason = failure_reason(code)
+                self._failure_reason = reason
                 _log(f"runtime build exited with {code}; starting limited mode")
                 command = [sys.executable, str(SCRIPT_DIR / "degraded_server.py")]
                 extra = {
-                    "MEMORYSAFE_DEGRADED_REASON": _BUILD_FAILURE_REASONS.get(code, "runtime_build_failed"),
+                    "MEMORYSAFE_DEGRADED_REASON": reason,
                     "MEMORYSAFE_INSTALL_LOG": str(log_path),
                 }
             self._start_child(command, extra)
@@ -231,11 +374,12 @@ class BootstrapProxy:
             # build deserves the same explanation as a failed one here.
             _log(f"could not finish starting MemorySafe after the build: {error}")
 
+        self._failure_reason = GENERIC_FAILURE
         try:
             self._start_child(
                 [sys.executable, str(SCRIPT_DIR / "degraded_server.py")],
                 {
-                    "MEMORYSAFE_DEGRADED_REASON": "runtime_build_failed",
+                    "MEMORYSAFE_DEGRADED_REASON": GENERIC_FAILURE,
                     "MEMORYSAFE_INSTALL_LOG": str(log_path) if log_path is not None else "",
                 },
             )
@@ -354,8 +498,9 @@ class BootstrapProxy:
                     for queued, message in self._pending
                     if not (message.get("id") is not None and now - queued >= self._deadline)
                 ]
+            text = self._setup_message()
             for message in expired:
-                self._write_host(_setup_in_progress_reply(message))
+                self._write_host(_setup_in_progress_reply(message, text))
 
     def _child_failed(self, reason: str) -> None:
         with self._state_lock:
@@ -445,6 +590,14 @@ class BootstrapProxy:
             self._activate_child()
             return
 
+        if (
+            method == "tools/call"
+            and self._pending_mode
+            and _tool_name(message) == "memorysafe_doctor"
+            and self._answer_doctor_during_setup(request_id)
+        ):
+            return
+
         with self._state_lock:
             active = self._child_active
             closing = self._closing
@@ -470,6 +623,7 @@ class BootstrapProxy:
             )
 
     def close(self) -> None:
+        self._stop_page()
         with self._state_lock:
             self._closing = True
             child = self._child

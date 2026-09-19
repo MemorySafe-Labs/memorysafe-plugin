@@ -30,6 +30,14 @@ import time
 import uuid
 from pathlib import Path
 
+try:
+    from memorysafe_chatgpt import provisioning
+except ImportError:
+    # Only a hand-run build lacks the plugin's src on PYTHONPATH: every plugin start sets
+    # it, and the proxy passes its environment down. Without it the build still runs; it
+    # records no progress, and a lock is judged stale by age alone, as before.
+    provisioning = None  # type: ignore[assignment]
+
 
 LOCK_TIMEOUT_SECONDS = 20 * 60
 STALE_LOCK_SECONDS = 30 * 60
@@ -65,6 +73,35 @@ def _lock_age(lock_dir: Path) -> float:
         return 0.0
 
 
+def _owner_pid(lock_dir: Path):
+    try:
+        owner = json.loads((lock_dir / "owner.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    pid = owner.get("pid") if isinstance(owner, dict) else None
+    return pid if isinstance(pid, int) and not isinstance(pid, bool) else None
+
+
+def _lock_is_stale(lock_dir: Path) -> bool:
+    """A lock whose builder is dead, or one too old to still be building.
+
+    Judged by age alone, a build killed part-way -- a reboot, sleep, Task Manager -- blocked
+    the next start for LOCK_TIMEOUT_SECONDS, which then fell into limited mode, because
+    STALE_LOCK_SECONDS is the longer of the two. A lock without owner.json is either a
+    moment old or was abandoned before its PID was written; age still decides that one.
+    Two waiters can both find a dead lock and both clear it: the same race the age rule
+    always had, and harmless for the same reason -- each builds in its own staging folder
+    and the publish is an atomic rename, so the result is one complete runtime. The two
+    builders' progress.Reporter writes can then interleave (see Reporter's docstring) --
+    still harmless, just a momentarily confusing progress readout.
+    """
+
+    pid = _owner_pid(lock_dir)
+    if pid is not None and provisioning is not None and not provisioning.process_alive(pid):
+        return True
+    return _lock_age(lock_dir) > STALE_LOCK_SECONDS
+
+
 def _acquire_lock(lock_dir: Path, is_ready) -> bool:
     """Return True for the builder, False when another builder completed it."""
 
@@ -78,7 +115,7 @@ def _acquire_lock(lock_dir: Path, is_ready) -> bool:
         except FileExistsError:
             if is_ready():
                 return False
-            if _lock_age(lock_dir) > STALE_LOCK_SECONDS:
+            if _lock_is_stale(lock_dir):
                 try:
                     shutil.rmtree(lock_dir)
                 except OSError:
@@ -130,6 +167,24 @@ def read_runtime_env(plugin_dir: Path) -> dict:
     return values
 
 
+class _NoProgress:
+    def step(self, name: str) -> None:
+        pass
+
+    def ready(self) -> None:
+        pass
+
+    def failed(self, exit_code: int) -> None:
+        pass
+
+
+def _reporter(data_root: Path, key: str):
+    """Where this build records its steps, for the progress page, the doctor and the setup reply."""
+    if provisioning is None:
+        return _NoProgress()
+    return provisioning.Reporter(str(data_root), key)
+
+
 def uv_runtime_is_ready(runtime_dir: Path) -> bool:
     return runtime_python(runtime_dir).is_file() and (runtime_dir / READY_MARKER).is_file()
 
@@ -163,20 +218,25 @@ def _ensure_uv(plugin_dir: Path, data_root: Path) -> str:
     return completed.stdout.strip()
 
 
-def _build_staged_uv_runtime(uv: str, plugin_dir: Path, staging: Path, python_version: str, data_root: Path) -> None:
+def _build_staged_uv_runtime(uv: str, plugin_dir: Path, staging: Path, python_version: str, data_root: Path, progress=None) -> None:
+    progress = progress or _NoProgress()
     environment = _uv_environment(data_root)
     # --relocatable: the venv is built in a staging folder and renamed into place, and
     # its scripts must not keep pointing at a folder that no longer exists.
+    progress.step("python")
     _run(
         [uv, "venv", "--python", python_version, "--managed-python", "--no-project", "--relocatable", str(staging)],
         environment,
     )
     python = runtime_python(staging)
+    progress.step("packages")
     _run(
         [uv, "pip", "install", "--python", str(python), "--require-hashes", "-r", str(plugin_dir / "requirements.lock")],
         environment,
     )
+    progress.step("verify")
     _run([str(python), "-c", _VERIFY_IMPORTS], environment)
+    progress.step("tokenizer")
     _fetch_tokenizer(python, data_root)
     (staging / READY_MARKER).write_text("ready\n", encoding="utf-8")
 
@@ -234,18 +294,27 @@ def install_uv_runtime(plugin_dir: Path, data_root: Path) -> bool:
         print(f"MemorySafe runtime {runtime_dir.name} was completed by another process.")
         return False
 
+    progress = _reporter(data_root, settings["RUNTIME_KEY"])
     staging: Path | None = None
     try:
         if uv_runtime_is_ready(runtime_dir):
             print(f"MemorySafe runtime {runtime_dir.name} is already ready.")
             return False
+        progress.step("uv")
         uv = _ensure_uv(plugin_dir, data_root)
         staging = Path(tempfile.mkdtemp(prefix=f".{runtime_dir.name}-build-", dir=str(runtime_parent)))
-        _build_staged_uv_runtime(uv, plugin_dir, staging, settings["PYTHON_VERSION"], data_root)
+        _build_staged_uv_runtime(uv, plugin_dir, staging, settings["PYTHON_VERSION"], data_root, progress=progress)
         _publish(staging, runtime_dir)
         staging = None
+        progress.ready()
         print(f"MemorySafe runtime {runtime_dir.name} is ready.")
         return True
+    except BuildFailure as failure:
+        progress.failed(failure.code)
+        raise
+    except Exception:
+        progress.failed(1)
+        raise
     finally:
         if staging is not None:
             shutil.rmtree(staging, onerror=_force_writable)

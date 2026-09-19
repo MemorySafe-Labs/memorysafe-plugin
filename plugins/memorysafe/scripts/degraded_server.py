@@ -77,14 +77,13 @@ def _writable(path):
         return False
 
 
-def _diagnose():
-    """Everything that can be established without the runtime."""
+def explain(reason):
+    """A headline for one setup failure, and what to do about it, in order.
 
-    reason = os.environ.get("MEMORYSAFE_DEGRADED_REASON", "unknown")
-    root = os.environ.get("MEMORYSAFE_INSTALL_ROOT", "")
-    log_path = os.environ.get("MEMORYSAFE_INSTALL_LOG", "")
-    version = "%d.%d.%d" % sys.version_info[:3]
-    old_python = sys.version_info[:2] < (3, 10)
+    The bootstrap proxy's progress page shows a failed build in these same words, so the
+    page and this server's doctor cannot describe one failure two ways. Builds a new list on
+    every call: _diagnose inserts into the one it gets back.
+    """
 
     if reason == "no_python":
         headline = (
@@ -143,6 +142,19 @@ def _diagnose():
             "Quit your assistant completely and reopen it.",
             "Ask me to check MemorySafe again.",
         ]
+    return headline, actions
+
+
+def _diagnose():
+    """Everything that can be established without the runtime."""
+
+    reason = os.environ.get("MEMORYSAFE_DEGRADED_REASON", "unknown")
+    root = os.environ.get("MEMORYSAFE_INSTALL_ROOT", "")
+    log_path = os.environ.get("MEMORYSAFE_INSTALL_LOG", "")
+    version = "%d.%d.%d" % sys.version_info[:3]
+    old_python = sys.version_info[:2] < (3, 10)
+
+    headline, actions = explain(reason)
 
     if reason == "no_python" and old_python:
         # Only here is this interpreter's age the problem: the pip launcher found nothing

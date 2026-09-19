@@ -38,6 +38,9 @@ if not exist "%MEMORYSAFE_STATE_DIR%\logs" mkdir "%MEMORYSAFE_STATE_DIR%\logs" 2
 set "RUNTIME_DIR=%DATA_ROOT%\runtime\%RUNTIME_KEY%"
 set "RUNTIME_PYTHON=%RUNTIME_DIR%\Scripts\python.exe"
 set "INSTALL_LOG=%MEMORYSAFE_STATE_DIR%\logs\claude-install.log"
+rem The dashboard's port. During a first start the bootstrap proxy serves setup progress there.
+set "SETUP_PORT=%MEMORYSAFE_SETUP_PORT%"
+if "%SETUP_PORT%"=="" set "SETUP_PORT=8765"
 
 call :write_cli_shim
 
@@ -112,7 +115,7 @@ set "SHIM_TMP=%SHIM%.tmp"
   echo set "PYTHONPATH=%PLUGIN_DIR%\src"
   echo set "TIKTOKEN_CACHE_DIR=%DATA_ROOT%\cache\tiktoken"
   echo if not exist "%RUNTIME_PYTHON%" ^(
-  echo   echo MemorySafe is still finishing its one-time setup. Try again in a minute.^>^&2
+  echo   echo MemorySafe is still finishing its one-time setup. Progress: http://127.0.0.1:%SETUP_PORT%/dashboard^>^&2
   echo   exit /b 1
   echo ^)
   echo "%RUNTIME_PYTHON%" -m memorysafe_chatgpt.cli %%*
