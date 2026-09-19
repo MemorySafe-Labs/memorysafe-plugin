@@ -1,4 +1,4 @@
-# MemorySafe 0.4.5
+# MemorySafe 0.4.6
 
 Private, governed memory for Claude Code, Claude Desktop and Codex, kept in one SQLite
 file on your own computer. macOS, Linux and Windows.
@@ -30,7 +30,19 @@ From a terminal, `memorysafe connect` shows the same list and changes nothing;
 
 ## Claude Code
 
-Needs the `claude` command-line tool.
+Needs the `claude` command-line tool, which the Claude desktop app does not include. If
+`claude --version` doesn't answer in a terminal, install it first:
+
+On macOS and Linux:
+
+    curl -fsSL https://claude.ai/install.sh | bash
+
+On Windows, in PowerShell:
+
+    irm https://claude.ai/install.ps1 | iex
+
+On Windows, open a new terminal afterwards. If `claude` still isn't found, the installer's
+last lines say how to add it to your PATH. Then:
 
     claude plugin marketplace add MemorySafe-Labs/memorysafe-plugin
     claude plugin install memorysafe@memorysafe
@@ -42,9 +54,10 @@ Restart Claude Code, run `/mcp`, and confirm `memorysafe` is connected with elev
 The desktop app does not include the `claude` command, so the commands above will not
 work here. Install the extension instead.
 
-Download https://github.com/MemorySafe-Labs/memorysafe-plugin/releases/latest/download/memorysafe-claude-desktop.mcpb and open it with
-Claude Desktop, or choose it from **Settings → Extensions → Advanced settings → Install
-Extension…**. Leave the data folder empty so Claude Desktop shares the same store.
+Download https://github.com/MemorySafe-Labs/memorysafe-plugin/releases/latest/download/memorysafe-claude-desktop.mcpb, then in Claude
+Desktop choose it from **Settings → Extensions → Advanced settings → Install Extension…**.
+Leave the data folder empty so Claude Desktop shares the same store. Don't double-click the
+file: on some computers Windows opens it in Notepad, and saving it from there breaks it.
 
 Then restart Claude Desktop and open <http://127.0.0.1:8765/dashboard>. If it loads,
 MemorySafe is installed. You do not need to download the extension again.

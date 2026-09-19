@@ -173,8 +173,10 @@ def _report_email(paths: SetupPaths, file_name: str, description: str) -> dict[s
             description[:1500] if description else "(not described)",
             "",
             f"Please attach {file_name} from your Downloads folder before sending.",
-            "It holds status, counts and sanitized error signatures only: no memories, "
-            "no conversations, no keys.",
+            # "and what you typed": what-went-wrong.txt goes into the bundle, so a claim of
+            # status and counts alone is no longer true of it.
+            "It holds status, counts, sanitized error signatures and what you typed: "
+            "no memories, no conversations, no keys.",
             "",
             f"MemorySafe {VERSION} · {device} · {sys.platform}",
         )

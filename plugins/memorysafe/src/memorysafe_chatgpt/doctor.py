@@ -13,7 +13,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlparse
 
 
@@ -377,6 +377,90 @@ def _registration_check(home: Path) -> dict[str, Any]:
     )
 
 
+def _assistants_check(home: Path, env: Mapping[str, str] | None = None, platform: str | None = None) -> dict[str, Any]:
+    """Which assistants on this computer reach MemorySafe, and whether one reaches it twice.
+
+    Both from the 19 Sep Windows tests (issues #4 and #7). An assistant installed but not
+    connected showed only on the dashboard, to someone who went looking. And the Claude
+    desktop app hands its extensions to the Claude Code sessions in its Code tab, so with
+    the Claude Code plugin installed as well, those sessions listed every tool twice while
+    `registration` passed: it only looks for hand-written entries beside a plugin.
+
+    "info", like _capture_hook_check: neither is a fault. Claude Code in a terminal never
+    sees the extension and needs its own copy, so which copy should go depends on where the
+    person uses Claude Code, and only they know that.
+    """
+    from .agents import command_line, inventory
+    from .migrate import PLUGIN_ID
+
+    environment = os.environ if env is None else env
+    here = platform or sys.platform
+    try:
+        found = {agent["id"]: agent for agent in inventory(home, environment, here)}
+    except OSError as error:
+        # This check reads other applications' folders, and any of them can be unreadable:
+        # a protected %APPDATA%\Claude, a codex.exe that goes away between the glob and the
+        # stat. Every other check in this file answers anyway, and the doctor is what
+        # INSTALL.md sends people to when something looks wrong -- one that dies on the way
+        # is the KeyError('info') incident again.
+        return _check("assistants", "info", "This computer's assistants could not be read.", unreadable=str(error))
+
+    # inventory() is the extension point for new hosts, so nothing here may assume which
+    # entries came back.
+    desktop = found.get("claude_desktop", {})
+    code = found.get("claude_code", {})
+    extension = desktop.get("how") == "extension"
+    # The desktop app hands its extensions to the Claude Code sessions in its Code tab, so
+    # with the extension enabled those sessions already have MemorySafe. Having the claude
+    # command is what tells us Claude Code also runs in a terminal, where the extension
+    # never reaches and a copy of its own is the only way in.
+    served_by_the_extension = extension and not code.get("command")
+    not_connected = [
+        agent["label"]
+        for agent in found.values()
+        if agent.get("present")
+        and not agent.get("connected")
+        and not (agent.get("id") == "claude_code" and served_by_the_extension)
+    ]
+    # Either shape of Claude Code registration doubles up with the extension. `registration`
+    # catches neither: it reports a hand-written entry only when a plugin sits beside it.
+    loaded_twice = extension and code.get("how") in {"plugin", "manual"}
+    findings = []
+    if not_connected:
+        one = len(not_connected) == 1
+        names = not_connected[0] if one else f"{', '.join(not_connected[:-1])} and {not_connected[-1]}"
+        findings.append(
+            f"{names} {'is' if one else 'are'} on this computer but not connected to MemorySafe. The dashboard's "
+            f"One memory, every assistant panel connects {'it' if one else 'them'}, or names the one step to take."
+        )
+    if loaded_twice:
+        if code.get("how") == "manual":
+            remove = "memorysafe migrate --apply"
+        elif code.get("command"):
+            # By full path when the bare name would not resolve: the native installer leaves
+            # claude off PATH on Windows, which is where this finding comes from.
+            remove = command_line([code["command"], "plugin", "uninstall", PLUGIN_ID], environment, here)
+        else:
+            # The plugin can be installed from inside a session, with no claude on PATH to
+            # remove it again.
+            remove = "/plugin in a Claude Code session"
+        findings.append(
+            "Claude Code sessions inside the Claude desktop app get MemorySafe twice, from the desktop "
+            "extension and from Claude Code's own copy, so every MemorySafe tool is listed twice there. "
+            f"If you use Claude Code only inside the desktop app, remove its copy: {remove}. "
+            "Claude Code in a terminal cannot see the extension, so keep both if you use it there too."
+        )
+    if not findings:
+        return _check("assistants", "pass", "Every assistant found on this computer is connected to MemorySafe.")
+    return _check(
+        "assistants",
+        "info",
+        " ".join(findings),
+        not_connected=not_connected,
+        loaded_twice_in_desktop_code_tab=loaded_twice,
+    )
+
+
 def _database_check(paths: DoctorPaths) -> dict[str, Any]:
     if not paths.database_path.is_file():
         return _check(
@@ -676,6 +760,7 @@ def run_doctor(install_root: Path | None = None) -> dict[str, Any]:
         checks.append(_runtime_check(paths))
         if layout.has_plugin:
             checks.append(_registration_check(Path.home()))
+            checks.append(_assistants_check(Path.home()))
             capture_hook = _capture_hook_check()
             if capture_hook is not None:
                 checks.append(capture_hook)

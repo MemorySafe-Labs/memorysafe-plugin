@@ -1030,7 +1030,8 @@ def dashboard_html(local_api_token: str | None = None) -> str:
             lead,
             document.createTextNode(
               `An email to ${email.to} has opened. Attach the report from ${where}, then press Send. ` +
-              "It holds status, counts and sanitized error signatures only: no memories, no conversations, no keys. Nothing is sent until you send it. "
+              // The description the person typed is in the report too, as what-went-wrong.txt.
+              "It holds status, counts, sanitized error signatures and what you typed: no memories, no conversations, no keys. Nothing is sent until you send it. "
             ),
             again,
           );
