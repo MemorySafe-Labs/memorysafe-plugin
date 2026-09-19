@@ -378,21 +378,21 @@ class SetupHandler(BaseHTTPRequestHandler):
             return
         if path == "/dashboard":
             if not self._loopback_request():
-                self._json({"error": "The dashboard is available only on this Mac."}, 403)
+                self._json({"error": "The dashboard is available only on this computer."}, 403)
                 return
             body = dashboard_html(local_api_token=self.setup_token).encode("utf-8")
             self._send(body, "text/html; charset=utf-8")
             return
         if path == "/panel":
             if not self._loopback_request():
-                self._json({"error": "The dashboard is available only on this Mac."}, 403)
+                self._json({"error": "The dashboard is available only on this computer."}, 403)
                 return
             body = panel_html(local_api_token=self.setup_token).encode("utf-8")
             self._send(body, "text/html; charset=utf-8")
             return
         if path == "/api/dashboard":
             if not self._loopback_request():
-                self._json({"error": "The dashboard is available only on this Mac."}, 403)
+                self._json({"error": "The dashboard is available only on this computer."}, 403)
                 return
             self._json(dashboard_payload(self.paths))
             return
@@ -401,7 +401,7 @@ class SetupHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/doctor":
             if not self._loopback_request():
-                self._json({"error": "Diagnostics are available only on this Mac."}, 403)
+                self._json({"error": "Diagnostics are available only on this computer."}, 403)
                 return
             self._json(run_doctor(self.paths.install_root))
             return

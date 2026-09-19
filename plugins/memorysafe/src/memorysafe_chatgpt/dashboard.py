@@ -288,7 +288,7 @@ def dashboard_html(local_api_token: str | None = None) -> str:
           <span>less context than restating everything</span>
         </div>
       </div>
-      <p class="token-note" id="token-model">Input tokens on this Mac. Not ChatGPT billed usage.</p>
+      <p class="token-note" id="token-model">Input tokens on this computer. Not ChatGPT billed usage.</p>
     </section>
     <section class="metrics" aria-label="What MemorySafe gave back">
       <div class="metric metric-green"><span>Memory searches</span><strong id="recall-count">—</strong><small>find calls recorded by MemorySafe</small></div>
@@ -619,7 +619,7 @@ def dashboard_html(local_api_token: str | None = None) -> str:
         setText("tokens-saved-label", extraTokens ? "EXTRA TOKENS / TURN" : "NOT YET PAYING OFF");
         byId("score-ring").style.setProperty("--score", 0);
       }
-      setText("token-model", "Input tokens on this Mac. Not ChatGPT billed usage.");
+      setText("token-model", "Input tokens on this computer. Not ChatGPT billed usage.");
 
       const breakEven = number(tokenBenchmark.break_even_facts);
       setText(
@@ -890,7 +890,7 @@ def panel_html(local_api_token: str | None = None) -> str:
   <div class="shell">
     <header>
       <div class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-      <div class="brand"><strong>MemorySafe</strong><span>On this Mac</span></div>
+      <div class="brand"><strong>MemorySafe</strong><span>On this computer</span></div>
       <div class="live">LOCAL</div>
     </header>
     <section class="hero">

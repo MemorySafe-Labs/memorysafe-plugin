@@ -55,6 +55,27 @@ def _now() -> str:
 
 
 def _display_path(path: Path) -> str:
+    """A path a person can read back, and type.
+
+    Claude Desktop ships as an MSIX package, and Windows redirects LOCALAPPDATA for
+    packaged apps into AppData\\Local\\Packages\\Claude_<publisher-hash>\\LocalCache.
+    Collapsing only the home prefix left that whole path in the report, which is not
+    something a user recognises as their MemorySafe folder or can retype. The
+    resolved path is still reported, under real_path, for --json and support bundles.
+
+    The separator is written literally rather than via Path, so the string is the
+    same when these tests run off Windows. Branches on sys.platform to match
+    DoctorPaths.from_install_root, which is what built the path being displayed.
+    """
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            try:
+                relative = path.resolve().relative_to(Path(local).resolve())
+            except (OSError, ValueError):
+                relative = None
+            if relative is not None:
+                return "%LOCALAPPDATA%\\" + str(relative).replace("/", "\\")
     try:
         return f"~/{path.resolve().relative_to(Path.home().resolve())}"
     except (OSError, ValueError):
@@ -189,6 +210,61 @@ def _url_ready(url: str, path: str, timeout: float = 0.6) -> bool:
         return False
 
 
+def _dashboard_report(url: str = "http://127.0.0.1:8765") -> dict[str, Any] | None:
+    """What the dashboard on the port says it is, or None if that is not one of ours.
+
+    Deliberately a second, smaller reader rather than reusing
+    claude_launcher._dashboard_status: importing claude_launcher pulls in server.py
+    and the whole MCP stack, and doctor must stay runnable when that import is the
+    thing that is broken.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        return None
+    try:
+        with urllib.request.urlopen(f"{url.rstrip('/')}/api/status", timeout=0.6) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("product") != PRODUCT:
+        return None
+    version = payload.get("version")
+    if not isinstance(version, str):
+        return None
+    pid = payload.get("pid")
+    return {"version": version, "pid": pid if isinstance(pid, int) and not isinstance(pid, bool) else None}
+
+
+def _dashboard_version_check() -> dict[str, Any] | None:
+    """Whether the dashboard answering on 8765 belongs to this install.
+
+    The install instructions name that page as the proof an install worked, so a
+    dashboard left by an older install confirms the wrong thing. A pre-0.4 one
+    reports no PID, so it cannot be stopped from here -- only named, with the
+    remedy pointed at the old extension that is holding the port.
+    """
+    from .bootstrap_catalog import VERSION
+
+    running = _dashboard_report()
+    if running is None:
+        return None
+    if running["version"] == VERSION:
+        return _check(
+            "dashboard_version",
+            "pass",
+            "The dashboard on port 8765 belongs to this install.",
+            version=running["version"],
+        )
+    return _check(
+        "dashboard_version",
+        "warning",
+        f"The dashboard on port 8765 is version {running['version']}, from an older install.",
+        version=running["version"],
+        expected=VERSION,
+        stoppable=running["pid"] is not None,
+    )
+
+
 def _layout_check(paths: DoctorPaths, layout: Layout) -> dict[str, Any]:
     if layout.is_extension_bundle:
         return _check(
@@ -264,6 +340,7 @@ def _memory_directory_check(paths: DoctorPaths) -> dict[str, Any]:
         "error" if problems else "pass",
         "The memory folder needs attention." if problems else "The memory folder is writable.",
         path=_display_path(data_dir),
+        real_path=str(data_dir),
         problems=problems,
     )
 
@@ -307,6 +384,7 @@ def _database_check(paths: DoctorPaths) -> dict[str, Any]:
             "warning",
             "No memories have been stored yet.",
             path=_display_path(paths.database_path),
+            real_path=str(paths.database_path),
             hint="The database is created the first time MemorySafe saves something.",
         )
     try:
@@ -326,6 +404,7 @@ def _database_check(paths: DoctorPaths) -> dict[str, Any]:
         status,
         "Database integrity passed." if status == "pass" else "Database integrity failed.",
         path=_display_path(paths.database_path),
+        real_path=str(paths.database_path),
         integrity=integrity,
         active_memories=active,
         decision_events=decisions,
@@ -512,6 +591,66 @@ def _runtime_check(paths: DoctorPaths) -> dict[str, Any]:
     )
 
 
+def _capture_hook_check(plugin_root: Path | None = None) -> dict[str, Any] | None:
+    """Whether the prompt-time capture nudge can run at all on this platform.
+
+    plugin/hooks/hooks.json names one command for every platform -- Claude Code does
+    not read a per-platform hook command (anthropics/claude-code#90122) -- and that
+    command is "/bin/sh <root>/scripts/capture_hook". Windows has no /bin/sh, so the
+    hook never fires there, and until this check existed nothing told the user.
+
+    "info", not "warning", on purpose. run_doctor's own comment records that info is
+    deliberately not a fault, and the gap is harmless: a hook that never runs cannot
+    block a prompt. Automatic capture still works when the assistant calls
+    memorysafe_auto_capture; only the nudge is missing.
+
+    A sh/batch polyglot fix was written and reverted in a09de8b, because Windows CI
+    produced failures that could not be attributed to the change rather than the
+    runner -- including the hook exiting 1 with output, where the contract is exit 0
+    and silence. That trade stands until hooks can be exercised under a real cmd.exe
+    in CI, or upstream ships a per-platform hook command. Do not reopen it from here.
+
+    Branches on sys.platform rather than os.name, matching DoctorPaths.from_install_root
+    in this same file; _launch_services_check's os.name check is the older idiom.
+
+    Returns None, following _launch_services_check's precedent, when this bundle
+    never had hooks/ to begin with -- see the guard below for why that is not the
+    same thing as a broken install.
+    """
+    root = plugin_root or Path(__file__).resolve().parents[2]
+    hooks_dir = root / "hooks"
+    if not hooks_dir.is_dir():
+        # The Claude Desktop extension and the Claude Code .zip never ship hooks/ --
+        # only the marketplace tree does (build_plugin._PLUGIN_FILES). detect_layout
+        # cannot tell them apart, because the Desktop bundle launches through the same
+        # scripts/start and writes the same runtime/<key>/ready marker, so has_plugin is
+        # true there too. Reporting a missing hint to a product that never had one is a
+        # false fault, and a noisy doctor is worth less than a quiet one.
+        return None
+    manifest = hooks_dir / "hooks.json"
+    script = root / "scripts" / "capture_hook"
+    if sys.platform == "win32":
+        return _check(
+            "capture_hook",
+            "info",
+            "The prompt-time capture hint does not run on Windows. Automatic capture still works.",
+            platform="windows",
+            hooks_manifest=_display_path(manifest),
+            reason="hooks.json cannot name a per-platform command",
+        )
+    present = manifest.is_file() and script.is_file()
+    return _check(
+        "capture_hook",
+        "pass" if present else "warning",
+        "The prompt-time capture hint is installed."
+        if present
+        else "The prompt-time capture hint is missing from this install.",
+        platform="posix",
+        hooks_manifest=_display_path(manifest),
+        hook_script=_display_path(script),
+    )
+
+
 def run_doctor(install_root: Path | None = None) -> dict[str, Any]:
     paths = DoctorPaths.from_install_root(install_root)
     layout = detect_layout(paths.install_root)
@@ -527,6 +666,9 @@ def run_doctor(install_root: Path | None = None) -> dict[str, Any]:
             chatgpt_configured = not configuration["details"].get("not_configured", False)
             checks.append(configuration)
         checks.append(_dashboard_check())
+        dashboard_version = _dashboard_version_check()
+        if dashboard_version is not None:
+            checks.append(dashboard_version)
         if layout.has_chatgpt:
             checks.append(_private_connection_check(paths, chatgpt_configured))
             if sys.platform == "darwin":
@@ -534,6 +676,9 @@ def run_doctor(install_root: Path | None = None) -> dict[str, Any]:
         checks.append(_runtime_check(paths))
         if layout.has_plugin:
             checks.append(_registration_check(Path.home()))
+            capture_hook = _capture_hook_check()
+            if capture_hook is not None:
+                checks.append(capture_hook)
 
     # "info" is deliberately not a fault: it reports a feature the user has not set up.
     statuses = {item["status"] for item in checks}
@@ -614,6 +759,14 @@ _REMEDIES: dict[str, dict[str, str]] = {
             "not use it, so ignore this unless you are setting up ChatGPT."
         ),
     },
+    "dashboard_version": {
+        "warning": (
+            "An older MemorySafe is still running and holding the dashboard address. "
+            "It is usually a previous Claude Desktop extension: open Claude Desktop, go "
+            "to Settings then Extensions, remove the older MemorySafe, and restart it. "
+            "Your memories are in a separate folder and are not affected."
+        ),
+    },
     "launch_services": {
         "warning": (
             "A background MemorySafe service is not running. Restarting the computer "
@@ -639,6 +792,19 @@ _REMEDIES: dict[str, dict[str, str]] = {
             "by an older manual install -- so every MemorySafe tool appears twice. Ask the "
             "assistant to remove the old MemorySafe registration; it will show what changes "
             "before making them."
+        ),
+    },
+    "capture_hook": {
+        # No "info" key here on purpose. next_actions() only ever builds actions
+        # for checks with status "error" or "warning" -- an "info" remedy is dead
+        # code, unreachable by construction. A Windows install with no prompt-time
+        # hook is documented as harmless, not wrong, so it earns no action item;
+        # the Windows-specific message already lives in the check's own `summary`
+        # (see _capture_hook_check), which _print_human prints regardless.
+        "warning": (
+            "The prompt-time capture hint is missing from this install. Automatic capture "
+            "still works when you ask for something to be remembered. Reinstalling the "
+            "plugin restores the hint."
         ),
     },
 }

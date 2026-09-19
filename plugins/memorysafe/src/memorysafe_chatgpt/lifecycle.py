@@ -78,13 +78,13 @@ _IS_ROLE = re.compile(
     re.IGNORECASE,
 )
 # A title is a short noun phrase -- "Head of Operations", "strategic advisor".
-# _IS_ROLE matches any "X is Y" sentence, so "Carla is satisfied that ..." and
-# "Carla is recording ..." were read as two competing job titles for the same
+# _IS_ROLE matches any "X is Y" sentence, so "she is satisfied that ..." and
+# "she is recording ..." were read as two competing job titles for the same
 # person and one silently superseded the other at confidence 0.86. Everything
 # below exists to keep a clause from being mistaken for a title.
 _MAX_TITLE_WORDS = 5
 _CLAUSE_MARKERS = frozenset("that because when while since so if whether although".split())
-# States and opinions, not roles. "Carla is satisfied with X" is not a job.
+# States and opinions, not roles. "She is satisfied with X" is not a job.
 _STATE_WORDS = frozenset(
     """
     satisfied happy unhappy pleased worried concerned aware sure unsure confident

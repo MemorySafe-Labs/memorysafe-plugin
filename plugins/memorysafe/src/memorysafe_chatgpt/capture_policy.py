@@ -5,11 +5,10 @@ over phrases like "email address" and "home address", so it blocked someone
 *saying* "email address" and saved an actual one:
 
     BLOCKED  "My card number is 4111 1111 1111 1111"   (a separate value check)
-    ALLOWED  "Ankit's email is someone@example.com"
-    ALLOWED  "Carla lives at 1250 Rue Sherbrooke Ouest, Montreal"
+    ALLOWED  "Her email is someone@example.com"
+    ALLOWED  "She lives at 1 Example Street, Montreal"
 
-Both Elan and Lumi reviewed the fix and converged on two rules that are now the
-shape of this module.
+Two reviewers converged on two rules that are now the shape of this module.
 
 **Name the shape, never echo the value.** A refusal is recorded in
 decision_events and surfaces in health and governance output. A reason that
@@ -184,11 +183,11 @@ def skip_reason(content: str, category: str, automatic_mode: bool) -> tuple[str,
     NOTE — one promise is not enforced here. The tool description says automatic
     capture never stores third-party personal details, and no pattern can decide
     that: "met Jean Tremblay, director at a bank, at Place Ville Marie" contains
-    no email, phone or card. Lumi raised this and it is unresolved. Either a
+    no email, phone or card. A reviewer raised this and it is unresolved. Either a
     subject policy rejects likely named third-person facts, or the description
-    narrows to what this module actually enforces. Carla decides; until then the
-    promise is wider than the code, and this comment is the only honest record
-    of that.
+    narrows to what this module actually enforces. The product owner decides; until
+    then the promise is wider than the code, and this comment is the only honest
+    record of that.
     """
 
     if not automatic_mode:

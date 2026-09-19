@@ -41,7 +41,7 @@ def tokenizer_metadata() -> dict[str, str | bool]:
         "tokenizer": TOKENIZER_NAME if exact else FALLBACK_TOKENIZER_NAME,
         "exact": exact,
         "note": (
-            "Exact local o200k_base token counts; no memory content leaves this Mac."
+            "Exact local o200k_base token counts; no memory content leaves this computer."
             if exact
             else "Local fallback counts are shown because the o200k_base cache is unavailable. "
             "Memory storage and recall are unaffected."

@@ -10,7 +10,15 @@ from .doctor import create_support_bundle, run_doctor
 def _print_human(report: dict) -> None:
     print(f"MemorySafe Doctor: {report['overall_status'].upper()}")
     for check in report["checks"]:
-        marker = {"pass": "✓", "warning": "!", "error": "✗"}[check["status"]]
+        # "info" became reachable on every Windows plugin install once the
+        # capture_hook check landed (it reports the prompt-time hint as
+        # unavailable there, not broken). A total dict lookup against this
+        # open-ended status field crashed `memorysafe doctor` with
+        # KeyError('info') -- the exact command plugin/INSTALL.md tells
+        # users to run when something looks wrong. Any status this dict
+        # doesn't know about must degrade to a plain bullet, not kill the
+        # report.
+        marker = {"pass": "✓", "info": "i", "warning": "!", "error": "✗"}.get(check["status"], "·")
         print(f"{marker} {check['summary']}")
     print("\nPrivate by default: no memories, chats, or secrets were included or uploaded.")
 
@@ -154,10 +162,10 @@ def main() -> None:
     explain.add_argument("memory_id")
     explain.add_argument("--json", action="store_true", dest="as_json")
     # find and remember exist so that MemorySafe is reachable from any host that can run
-    # a command, not only from the three that speak MCP over stdio. Grok Bot launches its
-    # MCP servers inside its own container, where this machine's paths do not exist; that
-    # is not a bug we can fix from here, and it is not a reason to put the store on a
-    # network. A command is the one interface every host already has.
+    # a command, not only from the three that speak MCP over stdio. Some hosts launch
+    # their MCP servers inside their own container, where this machine's paths do not
+    # exist; that is not a bug we can fix from here, and it is not a reason to put the
+    # store on a network. A command is the one interface every host already has.
     find = subparsers.add_parser("find", help="Search stored memories.")
     find.add_argument("query")
     find.add_argument("--limit", type=int, default=5)
