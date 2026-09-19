@@ -15,6 +15,7 @@ MemorySafe is a private local memory layer with explicit manual controls and an 
 - The user asks for MemorySafe health, governance, token measurements, or the dashboard.
 - The user asks why MemorySafe is not working or requests troubleshooting.
 - The user explicitly asks to enable or disable automatic mode.
+- The user asks to use MemorySafe in another assistant, or to connect their other assistants.
 - The user directly states a durable, non-sensitive fact. Offer it to `memorysafe_auto_capture`
   without checking the mode first; the server decides whether it is saved.
 
@@ -34,6 +35,10 @@ MemorySafe is a private local memory layer with explicit manual controls and an 
 ## First start
 
 The first start downloads uv, a Python, pinned packages and tokenizer data into the MemorySafe folder, which takes a minute or two. If a tool answers that MemorySafe is finishing its one-time setup, say so plainly and try again shortly. Nothing was saved by that call.
+
+## Connecting other assistants
+
+One install is enough: the other assistants on this computer connect to the same memory from the dashboard's **One memory, every assistant** panel, or with `connect` at the command's full path — `~/.local/share/MemorySafe/bin/memorysafe connect` on Linux, `"$HOME/Library/Application Support/MemorySafe/bin/memorysafe" connect` on macOS, `%LOCALAPPDATA%\MemorySafe\bin\memorysafe.cmd connect` on Windows. It is a dry run: show the user the list. Run it again with `--apply` only after they confirm, then ask them to restart each assistant it connected. It installs through each assistant's own plugin installer, never by editing configuration. Claude Desktop is never connected by it: the user confirms extensions inside Claude Desktop, so pass on the one step it reports.
 
 ## Troubleshooting
 

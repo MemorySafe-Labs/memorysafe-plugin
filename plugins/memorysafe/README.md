@@ -1,7 +1,9 @@
-# MemorySafe 0.4.3
+# MemorySafe 0.4.4
 
 Private, governed memory for Claude Code, Claude Desktop and Codex, kept in one SQLite
 file on your own computer. macOS, Linux and Windows.
+
+![Install MemorySafe once: install it in one assistant, restart it and open the dashboard, then connect the rest from the dashboard.](https://raw.githubusercontent.com/MemorySafe-Labs/memorysafe-plugin/main/install-guide.png)
 
 ## Before you start
 
@@ -9,6 +11,22 @@ Whatever you install below: **restart the assistant afterwards.** Its first star
 builds a private Python runtime — a minute or two, once. Within seconds,
 <http://127.0.0.1:8765/dashboard> shows that setup's progress on this computer, and it turns
 into your dashboard when setup finishes. That page is how you know it worked.
+
+## One install, every assistant
+
+Install MemorySafe in whichever assistant you use most, using its section below. Then open
+<http://127.0.0.1:8765/dashboard>. It finds the other assistants on this computer and asks once
+whether to connect them to the same memory. Say yes and it connects them, each through its own
+installer, and connects any you install later too. Remove MemorySafe from one of them later and
+it stays removed. Claude Desktop asks you to confirm extensions yourself, so for it the
+dashboard's **One memory, every assistant** panel shows the one step to take.
+
+From a terminal, `memorysafe connect` shows the same list and changes nothing;
+`memorysafe connect --apply` connects them:
+
+    ~/.local/share/MemorySafe/bin/memorysafe connect                  # Linux
+    ~/Library/Application\ Support/MemorySafe/bin/memorysafe connect  # macOS
+    %LOCALAPPDATA%\MemorySafe\bin\memorysafe.cmd connect              # Windows
 
 ## Claude Code
 
@@ -44,7 +62,8 @@ it: the hook only makes automatic capture fire more reliably once you turn that 
 The first time an assistant starts MemorySafe, it downloads uv from GitHub, a Python
 build through uv, hash-pinned packages from PyPI, and the tokenizer data it counts tokens
 with, all into the MemorySafe folder. That takes a minute or two, once. After that,
-nothing leaves this computer. On a network that blocks GitHub, set MEMORYSAFE_UV to a uv
+nothing leaves this computer, unless you connect another assistant to MemorySafe: that
+assistant's own installer then downloads the plugin from GitHub. On a network that blocks GitHub, set MEMORYSAFE_UV to a uv
 you already have, or HTTPS_PROXY to your proxy.
 
 ## What MemorySafe decides

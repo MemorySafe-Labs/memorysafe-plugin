@@ -145,8 +145,52 @@ def _print_migration(found: dict, changed: list[str], applied: bool) -> None:
         print(f"\nRestart {' and '.join(restart)} so the old registration is gone from new conversations.")
 
 
+def _print_connect(agents: list[dict], results: list[dict], applied: bool) -> None:
+    import os
+    import sys
+
+    from .agents import command_line, plan
+
+    print("MemorySafe connect" + ("" if applied else " (dry run: nothing changed)"))
+    print("One memory for every assistant on this computer.\n")
+    by_agent = {result["agent"]: result for result in results}
+    home = Path.home()
+    missing = []
+    restart = []
+    connectable = False
+    for agent in agents:
+        label = agent["label"]
+        if not agent["present"]:
+            missing.append(label)
+            continue
+        result = by_agent.get(agent["id"])
+        if result is not None:
+            print(f"  {'✓' if result['ok'] else '✗'} {label:15s} {result['message']}")
+            if result["ok"] and result["steps"]:
+                restart.append(label)
+        elif agent["connected"]:
+            print(f"  ✓ {label:15s} connected ({agent['how']})")
+        elif agent["can_connect"]:
+            commands = "  then  ".join(command_line(argv, os.environ, sys.platform) for argv in plan(agent, home))
+            print(f"  → {label:15s} not connected -> would run  {commands}")
+            connectable = True
+        else:
+            print(f"  ! {label:15s} not connected. {agent['next_step']}")
+    if missing:
+        print(f"\n  Not on this computer: {', '.join(missing)}")
+    if not applied and connectable:
+        print("\nRun  memorysafe connect --apply  to connect them. Each one goes through that assistant's own installer.")
+    if restart:
+        # An assistant reads its plugins at start-up, so a running one has not seen the new install.
+        print(f"\nRestart {' and '.join(restart)} to start using MemorySafe there.")
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="memorysafe", description="Read, write and inspect MemorySafe locally. No network.")
+    parser = argparse.ArgumentParser(
+        prog="memorysafe",
+        description="Read, write and inspect MemorySafe locally. Only `connect --apply` reaches the network, "
+        "through each assistant's own installer.",
+    )
     parser.add_argument("--install-root", type=Path)
     subparsers = parser.add_subparsers(dest="command", required=True)
     doctor = subparsers.add_parser("doctor", help="Inspect MemorySafe locally without changing it.")
@@ -186,6 +230,15 @@ def main() -> None:
     )
     migrate.add_argument("--apply", action="store_true")
     migrate.add_argument("--json", action="store_true", dest="as_json")
+    # A command, like explain, so it costs no tokens: an assistant asked to "connect
+    # MemorySafe to my other assistants" can run it, and so can the user.
+    connect = subparsers.add_parser(
+        "connect",
+        help="Connect every assistant on this computer to the same MemorySafe store. Changes nothing without --apply.",
+    )
+    connect.add_argument("--apply", action="store_true")
+    connect.add_argument("--agent", choices=("claude_code", "codex", "claude_desktop"))
+    connect.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args()
 
     if args.command == "doctor":
@@ -206,6 +259,25 @@ def main() -> None:
             print(json.dumps({"applied": args.apply, "found": found, "changed": changed}, indent=2, sort_keys=True))
         else:
             _print_migration(found, changed, args.apply)
+        return
+
+    if args.command == "connect":
+        from .agents import connect as connect_agent
+        from .agents import inventory
+
+        agents = inventory()
+        targets = [
+            agent["id"]
+            for agent in agents
+            if agent["can_connect"] and not agent["connected"] and args.agent in (None, agent["id"])
+        ]
+        results = [connect_agent(agent_id) for agent_id in targets] if args.apply else []
+        if results:
+            agents = inventory()
+        if args.as_json:
+            print(json.dumps({"applied": args.apply, "agents": agents, "results": results}, indent=2, sort_keys=True))
+        else:
+            _print_connect(agents, results, args.apply)
         return
 
     if args.command in {"find", "remember"}:

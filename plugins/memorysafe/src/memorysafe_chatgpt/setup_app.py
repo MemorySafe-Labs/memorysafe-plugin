@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from . import agents as agents_module
 from .bootstrap_catalog import VERSION
 from .dashboard import dashboard_html, panel_html
 from .doctor import create_support_bundle, run_doctor
@@ -296,30 +297,50 @@ SETUP_PAGE = r"""<!doctype html>
     main{width:min(850px,calc(100% - 32px));margin:0 auto;padding:42px 0 60px}.top{display:flex;align-items:center;gap:14px;margin-bottom:28px}.logo{width:48px;height:48px;display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:9px;border:1px solid rgba(25,228,233,.45);border-radius:13px;background:#07111a}.logo i{border-radius:3px;background:var(--cyan)}.logo i:nth-child(2),.logo i:nth-child(3){background:var(--blue)}h1{margin:0;font-size:29px;letter-spacing:-.7px}.subtitle{color:var(--muted);font-size:13px}.device{margin-left:auto;text-align:right}.device strong{display:block;color:var(--cyan);font:700 12px ui-monospace,SFMono-Regular,Menlo,monospace}.device span{color:var(--muted);font-size:11px}
     .route{display:grid;grid-template-columns:1fr 44px 1fr;gap:12px;align-items:center;padding:17px;border:1px solid var(--line);border-radius:15px;background:linear-gradient(140deg,rgba(75,131,255,.07),rgba(25,228,233,.03))}.endpoint{padding:15px;border-radius:11px;background:var(--card2);border:1px solid var(--line)}.endpoint span{display:block;color:var(--muted);font-size:11px}.endpoint strong{display:block;margin-top:4px;font-size:16px}.arrow{text-align:center;color:var(--cyan);font-size:22px}.online{color:var(--green)!important}.offline{color:var(--amber)!important}
     .steps{display:grid;gap:12px;margin-top:14px}.step{display:grid;grid-template-columns:42px 1fr;gap:14px;padding:19px;border:1px solid var(--line);border-radius:15px;background:var(--card)}.number{width:34px;height:34px;display:grid;place-items:center;border-radius:50%;background:rgba(75,131,255,.12);color:#9ab7ff;font-weight:800}.step.done .number{background:rgba(82,220,136,.12);color:var(--green)}.step h2{margin:2px 0 4px;font-size:17px}.step p{margin:0;color:var(--muted);font-size:12px}.actions{margin-top:14px;display:flex;gap:10px;flex-wrap:wrap}.button,button{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 16px;border:0;border-radius:10px;background:linear-gradient(135deg,var(--blue),#765df5);color:#fff;font:750 13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-decoration:none;cursor:pointer}.button.secondary,button.secondary{background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--text)}button:disabled,.button.disabled{opacity:.43;cursor:not-allowed;pointer-events:none}label{display:block;margin-top:12px;color:#dce6ef;font-size:12px;font-weight:700}input[type=password],input[type=text]{width:100%;margin-top:6px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#080d14;color:var(--text);font-size:14px;outline:none}input:focus{border-color:rgba(25,228,233,.5)}.check{display:flex;gap:9px;align-items:flex-start;margin-top:12px;color:var(--muted);font-weight:500}.check input{margin-top:3px;accent-color:var(--cyan)}.check a{color:#8bb8ff}.note{margin-top:10px;color:#6f7f92;font-size:11px}.message{display:none;margin-top:12px;padding:10px 12px;border-radius:9px;background:rgba(82,220,136,.08);color:#a5e7be;font-size:12px}.message.error{background:rgba(255,106,146,.08);color:#ffacc3}.footer{margin-top:16px;text-align:center;color:#667589;font-size:11px}@media(max-width:650px){main{padding-top:24px}.top{align-items:flex-start}.device{display:none}.route{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}.step{grid-template-columns:1fr}.number{width:30px;height:30px}}
+    .agent-list{display:grid;gap:8px;margin-top:14px}.agent{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 13px;border:1px solid var(--line);border-radius:11px;background:#080d14}.agent strong{display:block;font-size:14px}.agent small{display:block;margin-top:3px;color:var(--muted);font-size:11.5px;overflow-wrap:anywhere}.agent .state{flex:none;font:800 10.5px ui-monospace,Consolas,monospace;letter-spacing:.08em;padding:5px 9px;border-radius:7px}.agent .state.on{color:var(--green);border:1px solid rgba(82,220,136,.4)}.agent .state.off{color:#f4b75e;border:1px solid rgba(244,183,94,.4)}.agent button{flex:none;min-height:34px}.optional{margin:22px 0 0;color:var(--muted);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
   </style>
 </head>
 <body><main>
-  <header class="top"><div class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></div><div><h1>Set up MemorySafe</h1><div class="subtitle">Install once. Use on this Mac and through ChatGPT.</div></div><div class="device"><strong id="device-id">Loading…</strong><span>Secure device identity</span></div></header>
-  <section class="route"><div class="endpoint"><span>Memory lives on</span><strong>This Mac</strong></div><div class="arrow">↔</div><div class="endpoint"><span>Use MemorySafe from</span><strong>ChatGPT Web</strong><span id="online-label" class="offline">Checking connection…</span></div></section>
+  <header class="top"><div class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></div><div><h1>Set up MemorySafe</h1><div class="subtitle">Install once. One memory for every assistant on this computer.</div></div><div class="device"><strong id="device-id">Loading…</strong><span>Secure device identity</span></div></header>
+  <section class="route"><div class="endpoint"><span>Memory lives on</span><strong>This computer</strong></div><div class="arrow">↔</div><div class="endpoint"><span>Use MemorySafe from</span><strong>Your assistants</strong><span id="agents-summary" class="offline">Looking for them…</span></div></section>
   <section class="steps">
-    <article class="step done"><div class="number">✓</div><div><h2>MemorySafe is installed</h2><p>The real-data dashboard and local connector are ready on this Mac.</p><div class="actions"><a class="button" href="/dashboard">Open MemorySafe dashboard</a></div></div></article>
-    <article class="step" id="agreement-step"><div class="number">2</div><div><h2>Review the private-beta agreement</h2><p>Legal acceptance and optional Automatic Mode use separate choices.</p><label class="check"><input id="terms" type="checkbox"> <span>I agree to the <a href="/legal/terms" target="_blank">Beta Terms of Use</a> and acknowledge the <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</span></label><label class="check"><input id="automatic" type="checkbox"> <span><strong>Automatic capture is off.</strong> Tick this to let MemorySafe save concise, durable, non-sensitive facts as you work. Secrets, ID numbers, contact details, addresses and health information are never captured this way. You can change this whenever you like from the dashboard.</span></label><div class="actions"><button id="save-consent">Accept and continue</button></div><div id="consent-message" class="message"></div></div></article>
-    <article class="step" id="connection-step"><div class="number">3</div><div><h2>Secure the private connection</h2><p>Your runtime key stays on this Mac and is never placed in chat.</p><label for="tunnel-id">Tunnel ID</label><input id="tunnel-id" type="text" placeholder="tunnel_…" autocomplete="off"><label for="runtime-key">OpenAI runtime key</label><input id="runtime-key" type="password" placeholder="Paste the key beginning with sk-" autocomplete="off"><div class="note" id="key-note">If a key was migrated from the earlier beta, you can leave this empty.</div><div class="actions"><button id="save-connection">Save private connection</button></div><div id="connection-message" class="message"></div></div></article>
-    <article class="step" id="chatgpt-step"><div class="number">4</div><div><h2>Connect ChatGPT</h2><p>Open ChatGPT, enable MemorySafe, and the connector will identify this registered Mac automatically.</p><div class="actions"><a class="button disabled" id="connect-button" href="/open-chatgpt" target="_blank">Connect MemorySafe to ChatGPT</a><button class="secondary" id="refresh" type="button">Refresh status</button></div><div class="note">The Mac must be awake for this local beta. Cloud mode can be added later as a separate opt-in.</div></div></article>
+    <article class="step done"><div class="number">✓</div><div><h2>MemorySafe is installed</h2><p>The dashboard and the local connector are ready on this computer.</p><div class="actions"><a class="button" href="/dashboard">Open MemorySafe dashboard</a></div></div></article>
+    <article class="step" id="agreement-step"><div class="number">2</div><div><h2>Review the private-beta agreement</h2><p>Legal acceptance and optional Automatic Mode use separate choices.</p><label class="check"><input id="terms" type="checkbox"> <span>I agree to the <a href="/legal/terms" target="_blank">Beta Terms of Use</a> and acknowledge the <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</span></label><label class="check"><input id="automatic" type="checkbox"> <span><strong id="automatic-state">Automatic capture is off.</strong> <span id="automatic-help">Tick this to let MemorySafe save concise, durable, non-sensitive facts as you work.</span> Secrets, ID numbers, contact details, addresses and health information are never captured this way. You can change this whenever you like from the dashboard.</span></label><div class="actions"><button id="save-consent">Accept and continue</button></div><div id="consent-message" class="message"></div></div></article>
+    <article class="step" id="assistants-step"><div class="number">3</div><div><h2>Connect your assistants</h2><p>Every assistant you connect shares the same memory. Each one is installed through its own installer; Claude Desktop asks you to confirm its extension yourself.</p><div class="agent-list" id="agent-list"></div><div id="agents-message" class="message"></div></div></article>
   </section>
-  <div class="footer">MemorySafe Labs Inc. · Private Beta 0.3 · contact@memorysafe.ca</div>
+  <section id="chatgpt-steps" hidden>
+  <p class="optional">Optional · ChatGPT on the web, on this Mac</p>
+  <section class="steps">
+    <article class="step" id="connection-step"><div class="number">4</div><div><h2>Secure the private connection</h2><p>Your runtime key stays on this Mac and is never placed in chat.</p><label for="tunnel-id">Tunnel ID</label><input id="tunnel-id" type="text" placeholder="tunnel_…" autocomplete="off"><label for="runtime-key">OpenAI runtime key</label><input id="runtime-key" type="password" placeholder="Paste the key beginning with sk-" autocomplete="off"><div class="note" id="key-note">If a key was migrated from the earlier beta, you can leave this empty.</div><div class="actions"><button id="save-connection">Save private connection</button></div><div id="connection-message" class="message"></div></div></article>
+    <article class="step" id="chatgpt-step"><div class="number">5</div><div><h2>Connect ChatGPT</h2><p>Open ChatGPT, enable MemorySafe, and the connector will identify this registered Mac automatically. <span id="online-label" class="offline">Checking connection…</span></p><div class="actions"><a class="button disabled" id="connect-button" href="/open-chatgpt" target="_blank">Connect MemorySafe to ChatGPT</a><button class="secondary" id="refresh" type="button">Refresh status</button></div><div class="note">The Mac must be awake for this local beta. Cloud mode can be added later as a separate opt-in.</div></div></article>
+  </section>
+  </section>
+  <div class="footer">MemorySafe Labs Inc. · Private Beta __VERSION__ · contact@memorysafe.ca</div>
 </main><script>
 const setupToken=__SETUP_TOKEN__;
 const byId=(id)=>document.getElementById(id);
 let consentDirty=false;
 function show(id,text,isError=false){const el=byId(id);el.textContent=text;el.classList.toggle('error',isError);el.style.display='block'}
 async function api(path,options={}){const response=await fetch(path,{cache:'no-store',...options,headers:{'Content-Type':'application/json','X-MemorySafe-Setup-Token':setupToken,...(options.headers||{})}});const payload=await response.json();if(!response.ok)throw new Error(payload.error||'MemorySafe could not complete that step.');return payload}
-function render(s){byId('device-id').textContent=s.device_id;if(!consentDirty){byId('terms').checked=Boolean(s.terms_accepted);byId('automatic').checked=Boolean(s.automatic_mode)}if(!byId('tunnel-id').value&&s.tunnel_id)byId('tunnel-id').value=s.tunnel_id;byId('agreement-step').classList.toggle('done',Boolean(s.terms_accepted));byId('connection-step').classList.toggle('done',Boolean(s.runtime_key_saved&&s.tunnel_configured));byId('chatgpt-step').classList.toggle('done',Boolean(s.connector_online));byId('key-note').textContent=s.runtime_key_saved?'A private runtime key is already saved. Leave the field empty to keep it.':'Paste the runtime key once; it will remain only on this Mac.';const online=byId('online-label');online.textContent=s.connector_online?'ONLINE · READY':'DESKTOP CONNECTOR OFFLINE';online.className=s.connector_online?'online':'offline';byId('connect-button').classList.toggle('disabled',!(s.terms_accepted&&s.runtime_key_saved&&s.tunnel_configured));}
+// The label was fixed text, "Automatic capture is off.", beside a box that could be ticked --
+// so a tester saw it ticked and "off" at once. It now follows the box.
+function syncAutomatic(){const on=byId('automatic').checked;byId('automatic-state').textContent=on?'Automatic capture is on.':'Automatic capture is off.';byId('automatic-help').textContent=on?'MemorySafe saves concise, durable, non-sensitive facts as you work. Untick this to stop.':'Tick this to let MemorySafe save concise, durable, non-sensitive facts as you work.'}
+function render(s){byId('device-id').textContent=s.device_id;if(!consentDirty){byId('terms').checked=Boolean(s.terms_accepted);byId('automatic').checked=Boolean(s.automatic_mode)}syncAutomatic();if(!byId('tunnel-id').value&&s.tunnel_id)byId('tunnel-id').value=s.tunnel_id;byId('agreement-step').classList.toggle('done',Boolean(s.terms_accepted));byId('connection-step').classList.toggle('done',Boolean(s.runtime_key_saved&&s.tunnel_configured));byId('chatgpt-step').classList.toggle('done',Boolean(s.connector_online));byId('key-note').textContent=s.runtime_key_saved?'A private runtime key is already saved. Leave the field empty to keep it.':'Paste the runtime key once; it will remain only on this Mac.';const online=byId('online-label');online.textContent=s.connector_online?'ONLINE · READY':'DESKTOP CONNECTOR OFFLINE';online.className=s.connector_online?'online':'offline';byId('connect-button').classList.toggle('disabled',!(s.terms_accepted&&s.runtime_key_saved&&s.tunnel_configured));}
 async function refresh(){try{render(await api('/api/status'))}catch(e){byId('online-label').textContent='STATUS UNAVAILABLE'}}
-byId('terms').addEventListener('change',()=>{consentDirty=true});byId('automatic').addEventListener('change',()=>{consentDirty=true});
-byId('save-consent').addEventListener('click',async()=>{try{await api('/api/consent',{method:'POST',body:JSON.stringify({terms_accepted:byId('terms').checked,automatic_mode:byId('automatic').checked})});consentDirty=false;show('consent-message','Agreement saved on this Mac.');await refresh()}catch(e){show('consent-message',e.message,true)}});
+byId('terms').addEventListener('change',()=>{consentDirty=true});byId('automatic').addEventListener('change',()=>{consentDirty=true;syncAutomatic()});
+byId('save-consent').addEventListener('click',async()=>{try{await api('/api/consent',{method:'POST',body:JSON.stringify({terms_accepted:byId('terms').checked,automatic_mode:byId('automatic').checked})});consentDirty=false;show('consent-message','Agreement saved on this computer.');await refresh()}catch(e){show('consent-message',e.message,true)}});
 byId('save-connection').addEventListener('click',async()=>{try{await api('/api/connection',{method:'POST',body:JSON.stringify({tunnel_id:byId('tunnel-id').value,runtime_key:byId('runtime-key').value})});byId('runtime-key').value='';show('connection-message','Private connection saved. MemorySafe is starting…');setTimeout(refresh,1200)}catch(e){show('connection-message',e.message,true)}});
 byId('refresh').addEventListener('click',refresh);refresh();setInterval(refresh,3500);
+// The ChatGPT tunnel is set up by the macOS installer only; anywhere else those two steps
+// could never complete, and showed "DESKTOP CONNECTOR OFFLINE" for good.
+byId('chatgpt-steps').hidden=!__CHATGPT_AVAILABLE__;
+// Where a tester on Windows went looking for how to add Codex. Text only, never markup:
+// a next step carries a URL.
+function node(tag,cls,text){const el=document.createElement(tag);if(cls)el.className=cls;if(text!==undefined)el.textContent=String(text);return el}
+function renderAgents(agents){const list=byId('agent-list');list.replaceChildren();const present=agents.filter(a=>a.present);const connected=present.filter(a=>a.connected).length;const summary=byId('agents-summary');summary.textContent=present.length?`${connected} OF ${present.length} CONNECTED`:'NONE FOUND YET';summary.className=present.length&&connected===present.length?'online':'offline';byId('assistants-step').classList.toggle('done',present.length>0&&connected===present.length);if(!present.length){list.append(node('small','','No assistants found on this computer yet.'))}for(const agent of present){const row=node('div','agent');const copy=node('div');copy.append(node('strong','',agent.label));copy.append(node('small','',agent.connected?`Connected through its ${agent.how}.`:agent.can_connect?'Installed here. Not connected yet.':String(agent.next_step??'')));row.append(copy);if(agent.connected){row.append(node('span','state on','CONNECTED'))}else if(agent.can_connect){const button=node('button','','Connect');button.type='button';button.addEventListener('click',()=>connectAgent(agent,button));row.append(button)}else{row.append(node('span','state off','ONE STEP LEFT'))}list.append(row)}}
+async function loadAgents(){try{renderAgents((await api('/api/agents')).agents||[])}catch(e){byId('agents-summary').textContent='UNAVAILABLE'}}
+async function connectAgent(agent,button){button.disabled=true;button.textContent='Connecting…';show('agents-message',`Installing MemorySafe in ${agent.label}. This can take a minute.`);try{const payload=await api('/api/agents/connect',{method:'POST',body:JSON.stringify({agent:agent.id})});show('agents-message',String(payload.result?.message??''),!payload.ok);renderAgents(payload.agents||[])}catch(e){show('agents-message',e.message,true);button.disabled=false;button.textContent='Connect'}}
+loadAgents();
 </script></body></html>"""
 
 
@@ -373,7 +394,12 @@ class SetupHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/":
             token = json.dumps(self.setup_token)
-            body = SETUP_PAGE.replace("__SETUP_TOKEN__", token).encode("utf-8")
+            body = (
+                SETUP_PAGE.replace("__SETUP_TOKEN__", token)
+                .replace("__CHATGPT_AVAILABLE__", json.dumps(chatgpt_tunnel_installed()))
+                .replace("__VERSION__", html.escape(VERSION))
+                .encode("utf-8")
+            )
             self._send(body, "text/html; charset=utf-8")
             return
         if path == "/dashboard":
@@ -398,6 +424,19 @@ class SetupHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/status":
             self._json(status_payload(self.paths))
+            return
+        if path == "/api/agents":
+            # Which assistants are installed says something about this person; like the
+            # dashboard, it is answered only on this computer.
+            if not self._loopback_request():
+                self._json({"error": "The dashboard is available only on this computer."}, 403)
+                return
+            self._json(
+                {
+                    "agents": agents_module.inventory(),
+                    "auto_connect": agents_module.read_auto_connect(self.paths.state_dir),
+                }
+            )
             return
         if path == "/api/doctor":
             if not self._loopback_request():
@@ -458,6 +497,44 @@ class SetupHandler(BaseHTTPRequestHandler):
             elif path == "/api/support-bundle":
                 self._json({"ok": True, **support_bundle_payload(self.paths)})
                 return
+            elif path == "/api/agents/connect":
+                # Runs an assistant's own plugin installer. The token check above is what
+                # stops another website from triggering it: only this dashboard's page can
+                # read the token. The agent id is checked against a fixed list, and nothing
+                # from the request reaches the command line.
+                agent_id = str(payload.get("agent", ""))
+                if agent_id not in {"claude_code", "codex", "claude_desktop"}:
+                    self._json({"error": "Unknown assistant."}, 400)
+                    return
+                result = agents_module.connect(agent_id)
+                self._json(
+                    {
+                        "ok": result["ok"],
+                        "result": result,
+                        "agents": agents_module.inventory(),
+                        "auto_connect": agents_module.read_auto_connect(self.paths.state_dir),
+                    }
+                )
+                return
+            elif path == "/api/agents/decision":
+                # The one-time "connect your other assistants too?" answer. Yes connects
+                # them now and is remembered, so assistants installed later are connected
+                # when this service next starts; no is remembered so it is never asked again.
+                enabled = payload.get("auto_connect")
+                if not isinstance(enabled, bool):
+                    self._json({"error": "Answer yes or no."}, 400)
+                    return
+                agents_module.write_auto_connect(self.paths.state_dir, enabled)
+                results = agents_module.connect_all(state_dir=self.paths.state_dir) if enabled else []
+                self._json(
+                    {
+                        "ok": all(result["ok"] for result in results),
+                        "results": results,
+                        "agents": agents_module.inventory(),
+                        "auto_connect": enabled,
+                    }
+                )
+                return
             else:
                 self._json({"error": "Not found."}, 404)
                 return
@@ -487,6 +564,42 @@ def _warm_token_metrics() -> None:
     threading.Thread(target=warm, name="memorysafe-warm", daemon=True).start()
 
 
+# The launchd job scripts/install_macos.py creates for the ChatGPT tunnel (its TUNNEL_LABEL).
+_TUNNEL_AGENT = Path("Library") / "LaunchAgents" / "ca.memorysafe.beta.tunnel.plist"
+
+
+def chatgpt_tunnel_installed(home: Path | None = None) -> bool:
+    """Whether the ChatGPT tunnel the Setup page's optional steps configure exists here.
+
+    Only the macOS installer creates it. A Mac with just the plugin has none, and would get
+    the same permanent "DESKTOP CONNECTOR OFFLINE" that Setup showed on Windows.
+    """
+
+    return sys.platform == "darwin" and ((home or Path.home()) / _TUNNEL_AGENT).is_file()
+
+
+def _auto_connect_on_start(paths: SetupPaths) -> threading.Thread:
+    """Connect assistants installed since the user said yes, without holding up the dashboard.
+
+    This service is the one singleton every host's launcher starts (port 8765 admits one),
+    so it is the one place where connecting cannot race another copy of itself -- once it
+    holds the port, which is why main() starts this only after the bind. Two hosts starting
+    together each see the port free and each spawn a copy; the loser's bind fails, and it
+    must not have started an installer by then. Before the user has answered yes,
+    auto_connect_on_start does nothing at all.
+    """
+
+    def run() -> None:
+        try:
+            agents_module.auto_connect_on_start(paths.state_dir)
+        except Exception:
+            pass  # an installer that fails must not take the dashboard down with it
+
+    thread = threading.Thread(target=run, name="memorysafe-auto-connect", daemon=True)
+    thread.start()
+    return thread
+
+
 def _snapshot_on_start(paths: SetupPaths) -> None:
     """One consistent copy each time the service starts.
 
@@ -508,6 +621,7 @@ def main() -> None:
     _snapshot_on_start(SetupHandler.paths)
     _warm_token_metrics()
     with ThreadingHTTPServer((HOST, port), SetupHandler) as server:
+        _auto_connect_on_start(SetupHandler.paths)
         resolved_port = server.server_address[1]
         print(f"READY http://{HOST}:{resolved_port}/", flush=True)
         server.serve_forever(poll_interval=0.25)

@@ -162,6 +162,33 @@ def dashboard_html(local_api_token: str | None = None) -> str:
     .memory-forget:disabled { opacity: .5; cursor: default; }
     .memory-forget:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
     .empty { padding: 19px 10px; text-align: center; color: var(--muted); font-size: 10px; border: 1px dashed var(--border); border-radius: 9px; }
+    .agents-panel { margin-top: 10px; }
+    .agent { display: grid; grid-template-columns: 1fr auto; gap: 9px; align-items: center; padding: 9px 10px; border-radius: 9px; background: var(--surface-2); }
+    .agent-copy { min-width: 0; }
+    .agent-name { display: block; color: #dce5ed; font-size: 10px; font-weight: 700; }
+    .agent-note { display: block; margin-top: 4px; color: var(--dim); font-size: 8px; overflow-wrap: anywhere; }
+    .agent-state { font: 700 8px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; padding: 3px 7px; border-radius: 5px; white-space: nowrap; }
+    .agent-state.on { color: var(--green); border: 1px solid rgba(82,220,136,.35); }
+    .agent-state.off { color: var(--amber); border: 1px solid rgba(244,183,94,.35); }
+    .agent-connect { border: 1px solid rgba(25,228,233,.45); background: rgba(25,228,233,.08); color: var(--cyan);
+      font: 700 8px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .09em; text-transform: uppercase;
+      padding: 4px 9px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+    .agent-connect:hover { background: rgba(25,228,233,.16); }
+    .agent-connect:disabled { opacity: .5; cursor: wait; }
+    .agent-connect:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+    .agents-missing { margin: 9px 0 0; color: var(--dim); font-size: 8px; }
+    .agents-ask { margin-bottom: 9px; padding: 11px 12px; border-radius: 9px; border: 1px solid rgba(25,228,233,.35); background: rgba(25,228,233,.06); }
+    .agents-ask p { margin: 0 0 9px; color: #dce5ed; font-size: 10px; }
+    .agents-ask-actions { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+    .agents-ask small { display: block; margin-top: 8px; color: var(--dim); font-size: 8px; }
+    .agents-no, .agents-link { border: 1px solid var(--border); background: transparent; color: var(--muted);
+      font: 700 8px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .09em; text-transform: uppercase;
+      padding: 4px 9px; border-radius: 5px; cursor: pointer; }
+    .agents-no:hover, .agents-link:hover { color: var(--text); border-color: rgba(25,228,233,.38); }
+    .agents-link { padding: 1px 6px; margin-left: 4px; }
+    .agents-auto { margin: 9px 0 0; color: var(--dim); font-size: 8px; }
+    .agents-message { margin: 9px 0 0; color: #9fcdb0; font-size: 9px; overflow-wrap: anywhere; }
+    .agents-message.bad { color: var(--amber); }
     .token-panel { margin-top: 10px; background: linear-gradient(145deg, rgba(75,131,255,.07), rgba(25,228,233,.025) 62%, var(--surface)); }
     .token-badge { color: #8eabef !important; font: 700 8px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
     .token-live-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
@@ -262,6 +289,21 @@ def dashboard_html(local_api_token: str | None = None) -> str:
           <span id="tokens-saved-label">ESTIMATED TOKENS SAVED / TURN</span>
         </div>
       </div>
+    </section>
+    <section class="panel agents-panel" id="agents-panel" aria-label="Your assistants" hidden>
+      <div class="panel-title"><strong>One memory, every assistant</strong><span id="agents-note">ON THIS COMPUTER</span></div>
+      <div class="agents-ask" id="agents-ask" hidden>
+        <p id="agents-ask-text"></p>
+        <div class="agents-ask-actions">
+          <button class="agent-connect" id="agents-yes" type="button">Yes, connect them</button>
+          <button class="agents-no" id="agents-no" type="button">No thanks</button>
+        </div>
+        <small>Your answer is remembered. Yes also connects assistants you install later, the next time MemorySafe starts.</small>
+      </div>
+      <div class="memory-list" id="agents"></div>
+      <p class="agents-missing" id="agents-missing" hidden></p>
+      <p class="agents-auto" id="agents-auto" hidden>Assistants you install later connect automatically.<button class="agents-link" id="agents-auto-off" type="button">Turn off</button></p>
+      <p class="agents-message" id="agents-message" hidden></p>
     </section>
     <section class="panel token-panel" aria-label="Tokens with and without MemorySafe">
       <div class="panel-title"><strong>With vs without MemorySafe</strong><span class="token-badge">THIS STORE · THIS TURN</span></div>
@@ -711,10 +753,159 @@ def dashboard_html(local_api_token: str | None = None) -> str:
       }
     }, { passive: true });
 
+    function agentNode(tag, className, text) {
+      const node = document.createElement(tag);
+      node.className = className;
+      if (text !== undefined) node.textContent = String(text);
+      return node;
+    }
+
+    function renderAgents(agents, autoConnect) {
+      // Installing MemorySafe in one assistant used to leave the others to be found and
+      // installed one guide at a time. This panel lists every assistant on the computer
+      // and connects the rest from here, each through its own installer.
+      const panel = byId("agents-panel");
+      const list = byId("agents");
+      if (!Array.isArray(agents) || !agents.length) { panel.hidden = true; return; }
+      panel.hidden = false;
+      list.replaceChildren();
+      const present = agents.filter((agent) => agent.present);
+      // Asked once. Installing into another app unasked crosses a line; asking on every
+      // visit is how a question gets dismissed unread. null means never answered.
+      const connectable = present.filter((agent) => agent.can_connect && !agent.connected);
+      const ask = byId("agents-ask");
+      ask.hidden = !(autoConnect === null && connectable.length > 0);
+      if (!ask.hidden) {
+        const names = connectable.map((agent) => agent.label);
+        const listed = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0];
+        const pronoun = names.length > 1 ? "them" : "it";
+        setText("agents-ask-text", `MemorySafe found ${listed} on this computer. Connect ${pronoun} to the same memory?`);
+        setText("agents-yes", `Yes, connect ${pronoun}`);
+      }
+      byId("agents-auto").hidden = autoConnect !== true;
+      const connected = present.filter((agent) => agent.connected).length;
+      setText("agents-note", `${present.length} FOUND · ${connected} CONNECTED`);
+      if (!present.length) {
+        list.append(agentNode("div", "empty", "No assistants found on this computer yet."));
+      }
+      for (const agent of present) {
+        const row = agentNode("div", "agent");
+        const copy = agentNode("div", "agent-copy");
+        copy.append(agentNode("span", "agent-name", agent.label));
+        const note = agent.connected
+          ? `Connected through its ${agent.how}.`
+          : agent.can_connect ? "Installed here. Not connected yet." : String(agent.next_step ?? "");
+        copy.append(agentNode("span", "agent-note", note));
+        row.append(copy);
+        if (agent.connected) {
+          row.append(agentNode("span", "agent-state on", "CONNECTED"));
+        } else if (agent.can_connect) {
+          const button = agentNode("button", "agent-connect", "Connect");
+          button.type = "button";
+          button.addEventListener("click", () => connectAgent(agent, button));
+          row.append(button);
+        } else {
+          row.append(agentNode("span", "agent-state off", "ONE STEP LEFT"));
+        }
+        list.append(row);
+      }
+      const missing = agents.filter((agent) => !agent.present).map((agent) => agent.label);
+      const missingNode = byId("agents-missing");
+      missingNode.hidden = !missing.length;
+      missingNode.textContent = missing.length ? `Not on this computer: ${missing.join(", ")}` : "";
+    }
+
+    async function loadAgents() {
+      if (!standalone) return;
+      try {
+        const response = await fetch("/api/agents", { cache: "no-store" });
+        const payload = await response.json();
+        if (response.ok) renderAgents(payload.agents, payload.auto_connect ?? null);
+      } catch (_) {
+        // Nothing else on the dashboard depends on this panel, so it simply stays hidden.
+      }
+    }
+
+    async function decide(enabled) {
+      const message = byId("agents-message");
+      const buttons = [byId("agents-yes"), byId("agents-no"), byId("agents-auto-off")];
+      buttons.forEach((button) => { button.disabled = true; });
+      message.hidden = false;
+      message.className = "agents-message";
+      message.textContent = enabled ? "Connecting your other assistants. This can take a minute each." : "";
+      message.hidden = !enabled;
+      try {
+        const response = await fetch("/api/agents/decision", {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "Content-Type": "application/json",
+            "X-MemorySafe-Setup-Token": localApiToken,
+          },
+          body: JSON.stringify({ auto_connect: enabled }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error ?? "Your answer could not be saved.");
+        const results = Array.isArray(payload.results) ? payload.results : [];
+        if (results.length) {
+          message.hidden = false;
+          message.className = payload.ok ? "agents-message" : "agents-message bad";
+          message.textContent = results.map((result) => String(result.message ?? "")).join(" ");
+        } else {
+          // Nothing left to connect -- the list the question was asked from had gone stale.
+          // "Connecting..." must not stay up as if work were still running.
+          message.hidden = true;
+          message.textContent = "";
+        }
+        renderAgents(payload.agents, payload.auto_connect ?? null);
+      } catch (error) {
+        message.hidden = false;
+        message.className = "agents-message bad";
+        message.textContent = error.message;
+      } finally {
+        buttons.forEach((button) => { button.disabled = false; });
+      }
+    }
+
+    byId("agents-yes").addEventListener("click", () => decide(true));
+    byId("agents-no").addEventListener("click", () => decide(false));
+    byId("agents-auto-off").addEventListener("click", () => decide(false));
+
+    async function connectAgent(agent, button) {
+      const message = byId("agents-message");
+      button.disabled = true;
+      button.textContent = "Connecting…";
+      message.hidden = false;
+      message.className = "agents-message";
+      message.textContent = `Installing MemorySafe in ${agent.label}. This can take a minute.`;
+      try {
+        const response = await fetch("/api/agents/connect", {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "Content-Type": "application/json",
+            "X-MemorySafe-Setup-Token": localApiToken,
+          },
+          body: JSON.stringify({ agent: agent.id }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error ?? `${agent.label} could not be connected.`);
+        message.className = payload.ok ? "agents-message" : "agents-message bad";
+        message.textContent = String(payload.result?.message ?? "");
+        renderAgents(payload.agents, payload.auto_connect ?? null);
+      } catch (error) {
+        message.className = "agents-message bad";
+        message.textContent = error.message;
+        button.disabled = false;
+        button.textContent = "Connect";
+      }
+    }
+
     byId("refresh").addEventListener("click", async () => {
       const button = byId("refresh");
       button.disabled = true;
       button.textContent = "Refreshing…";
+      loadAgents();
       try {
         const result = await request("tools/call", { name: "memorysafe_health", arguments: {} });
         render(result);
