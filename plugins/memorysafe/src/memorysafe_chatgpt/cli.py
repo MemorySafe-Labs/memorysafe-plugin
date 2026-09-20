@@ -130,6 +130,22 @@ def _print_migration(found: dict, changed: list[str], applied: bool) -> None:
         else:
             print(f"  {label:12s} registered by hand in {entry['config']} -> would remove")
             removable = True
+    projects = found["claude_code"].get("projects") or []
+    project_files = found["claude_code"].get("project_files") or []
+    if projects or project_files:
+        # These outlived every earlier migrate, which only ever read the user-scope entry.
+        for name in projects:
+            state = "removed from" if found["claude_code"]["config"] in changed and applied else (
+                "would remove from" if found["claude_code"]["plugin_installed"] else "kept in"
+            )
+            print(f"  Project      memorysafe {state} {name} in {found['claude_code']['config']}")
+        for path in project_files:
+            state = "removed from" if path in changed else ("would remove from" if found["claude_code"]["plugin_installed"] else "kept in")
+            print(f"  Project      memorysafe {state} {path}")
+        if not found["claude_code"]["plugin_installed"]:
+            print("               kept: the MemorySafe plugin for Claude Code is not installed")
+        elif not applied:
+            removable = True
     if found["old_runtime"]:
         megabytes = found["old_runtime"]["bytes"] / (1024 * 1024)
         print(
@@ -143,6 +159,40 @@ def _print_migration(found: dict, changed: list[str], applied: bool) -> None:
     if restart:
         # The assistant keeps the old registration's tools until it reads its config again.
         print(f"\nRestart {' and '.join(restart)} so the old registration is gone from new conversations.")
+
+
+def _megabytes(size: int) -> str:
+    return f"{size / (1024 * 1024):.0f} MB" if size >= 1024 * 1024 else f"{size / 1024:.0f} KB"
+
+
+def _print_uninstall(items: list[dict], result: dict, applied: bool, purge: bool) -> None:
+    print("MemorySafe uninstall" + ("" if applied else " (dry run: nothing changed)"))
+    if not items:
+        print("\n  Nothing of MemorySafe's is on this computer.")
+        return
+    total = sum(item["bytes"] for item in items if not item["purge_only"])
+    print(f"One memory for every assistant, off this computer again. {_megabytes(total)} to free.\n")
+    for item in items:
+        size = f"  ({_megabytes(item['bytes'])})" if item["bytes"] else ""
+        if item["manual"]:
+            print(f"  !  {item['label']:16s} {item['detail']}{size}")
+            print(f"     {item['manual']}")
+        elif item["purge_only"] and not purge:
+            # Never a side effect of uninstalling: a person who reinstalls expects these back.
+            print(f"  ·  {item['label']:16s} {item['detail']}{size} -> kept; add --purge to delete")
+        elif applied:
+            marker = "✓" if "{}: {}".format(item["label"], item["detail"]) in result["removed"] else "✗"
+            print(f"  {marker}  {item['label']:16s} {item['detail']}{size}")
+        else:
+            print(f"  →  {item['label']:16s} {item['detail']}{size} -> would remove")
+    if result["memories_backup"]:
+        print(f"\n  Your memories were copied to {result['memories_backup']} before being deleted.")
+    for failure in result["failed"]:
+        print(f"\n  Could not remove {failure}")
+    if not applied:
+        print("\nRun  memorysafe uninstall --apply  to remove these. Each file it edits is backed up first.")
+        if not purge:
+            print("Add --purge to delete your memories too; a copy is saved to your home folder first.")
 
 
 def _print_connect(agents: list[dict], results: list[dict], applied: bool) -> None:
@@ -239,6 +289,18 @@ def main() -> None:
     connect.add_argument("--apply", action="store_true")
     connect.add_argument("--agent", choices=("claude_code", "codex", "claude_desktop"))
     connect.add_argument("--json", action="store_true", dest="as_json")
+    uninstall = subparsers.add_parser(
+        "uninstall",
+        help="Remove MemorySafe from this computer. Changes nothing without --apply, and keeps your "
+        "memories unless you add --purge.",
+    )
+    uninstall.add_argument("--apply", action="store_true")
+    uninstall.add_argument(
+        "--purge",
+        action="store_true",
+        help="Also delete the memories. A copy of the database is saved to your home folder first.",
+    )
+    uninstall.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args()
 
     if args.command == "doctor":
@@ -259,6 +321,22 @@ def main() -> None:
             print(json.dumps({"applied": args.apply, "found": found, "changed": changed}, indent=2, sort_keys=True))
         else:
             _print_migration(found, changed, args.apply)
+        return
+
+    if args.command == "uninstall":
+        from . import uninstall as uninstall_module
+
+        data_root = args.install_root or _resolve_database(args.install_root).parent.parent
+        items = uninstall_module.inventory(data_root=Path(data_root))
+        result = (
+            uninstall_module.apply(data_root=Path(data_root), purge=args.purge)
+            if args.apply
+            else {"removed": [], "failed": [], "manual": [], "memories_backup": None}
+        )
+        if args.as_json:
+            print(json.dumps({"applied": args.apply, "purge": args.purge, "items": items, **result}, indent=2, sort_keys=True))
+        else:
+            _print_uninstall(items, result, args.apply, args.purge)
         return
 
     if args.command == "connect":

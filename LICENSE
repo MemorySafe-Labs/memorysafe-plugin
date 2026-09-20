@@ -1,7 +1,7 @@
 # MemorySafe Beta Terms of Use
 
-**Effective date:** August 3, 2026  
-**Version:** 0.1 - Private Beta
+**Effective date:** September 20, 2026  
+**Version:** 0.2 - Private Beta
 
 These Terms of Use ("Terms") are a legal agreement between you and MemorySafe Labs Inc. ("MemorySafe Labs," "we," "us," or "our") governing your access to and use of the MemorySafe private beta software, connector, dashboard, and related services (collectively, the "Beta").
 
@@ -30,7 +30,9 @@ MemorySafe provides local memory-governance tools for compatible AI assistants. 
 - enable or disable optional Automatic Mode; and
 - merge duplicate or near-duplicate memories.
 
-The current private beta stores MemorySafe records in a local SQLite database on the computer running the connector. It does not independently copy your complete ChatGPT conversation history or read ChatGPT's built-in memory. When ChatGPT invokes a MemorySafe action, relevant app requests and responses travel through the authorized connection between ChatGPT and the local connector.
+MemorySafe runs on your own computer and connects to compatible AI assistants through the Model Context Protocol. In this beta those are Claude Code, Claude Desktop, and Codex, and, on macOS only, ChatGPT through OpenAI's Secure MCP Tunnel. One local SQLite database serves all of them, so a memory saved in one assistant is available in the others on that computer.
+
+The Beta does not independently copy your conversation history and does not read an assistant's own built-in memory. For an assistant that runs on your computer, MemorySafe requests and responses travel between that assistant and the local connector on the same machine. ChatGPT is the exception: it reaches the connector through OpenAI's tunnel, so those requests and responses pass through OpenAI's systems.
 
 ## 4. Automatic Mode is optional
 
@@ -44,7 +46,9 @@ You may disable Automatic Mode at any time. Disabling it stops new automatic cap
 
 You retain any rights you have in the content you provide. You give MemorySafe Labs a limited, non-exclusive permission to process that content only as necessary to operate, secure, support, and improve the Beta in accordance with the Privacy Policy and your instructions.
 
-The current private beta is designed so that memory content is stored on your device rather than in a central MemorySafe Labs database. Memory content may still be transmitted to and processed by ChatGPT or OpenAI when you ask ChatGPT to save, find, display, or use a memory. Your use of ChatGPT and OpenAI services is governed by your separate agreement with OpenAI.
+The current private beta is designed so that memory content is stored on your device rather than in a central MemorySafe Labs database.
+
+Memory content still reaches the assistant you are using, because that is what asking it to save, find, display, or use a memory means. Whatever that assistant then includes in its own conversation is sent to and processed by its provider -- Anthropic for Claude Code and Claude Desktop, OpenAI for Codex and ChatGPT -- under your separate agreement with that provider, not under these Terms. For ChatGPT on macOS, the requests and responses themselves also pass through OpenAI's tunnel.
 
 You are responsible for the accuracy, lawfulness, and appropriateness of your content. Do not use the Beta to store passwords, authentication codes, API keys, payment card data, protected health information, information about another person without proper authority, or content that you do not have the right to process.
 
@@ -58,11 +62,11 @@ You must not:
 - attempt to access another user's memories or computer without authorization;
 - use the Beta to make high-impact decisions about another person in employment, housing, credit, insurance, health care, education, or legal services;
 - use the Beta as a substitute for qualified medical, legal, financial, safety, or other professional advice; or
-- violate OpenAI's applicable terms, usage policies, or app permissions.
+- violate the applicable terms, usage policies, or permissions of an assistant you connect MemorySafe to, or of its provider.
 
 ## 7. Third-party services
 
-The Beta may depend on ChatGPT, OpenAI, your operating system, and an authorized tunnel or connector service. These are third-party services governed by their own terms and privacy practices. MemorySafe Labs does not control and is not responsible for the availability, security, accuracy, or conduct of third-party services.
+The Beta depends on the assistants you connect it to and their providers, such as Anthropic or OpenAI, on your operating system, and, for ChatGPT on macOS, on an authorized tunnel service. Its first start also downloads uv, a Python build, and pinned packages from their distributors. These are third-party services governed by their own terms and privacy practices. MemorySafe Labs does not control and is not responsible for the availability, security, accuracy, or conduct of third-party services.
 
 ## 8. Privacy
 
@@ -70,7 +74,7 @@ Our MemorySafe Beta Privacy Policy explains how information is handled. It forms
 
 ## 9. Security and your responsibilities
 
-You are responsible for keeping your device, ChatGPT account, API or runtime credentials, and local files secure. Do not share access keys in chats or support messages. The Beta does not currently add application-level encryption to the local MemorySafe database; protection depends in part on your device and operating-system security settings.
+You are responsible for keeping your device, your accounts with the assistants you connect, API or runtime credentials, and local files secure. Do not share access keys in chats or support messages. The Beta does not currently add application-level encryption to the local MemorySafe database; protection depends in part on your device and operating-system security settings.
 
 No system is completely secure. Notify us promptly at contact@memorysafe.ca if you believe the Beta or your MemorySafe data has been compromised.
 
@@ -82,7 +86,7 @@ You may choose to provide feedback, bug reports, or suggestions. You grant us pe
 
 We may update, restrict, suspend, or discontinue the Beta at any time. We may suspend or terminate access if we reasonably believe you violated these Terms, created a security or legal risk, or used the Beta in a harmful manner.
 
-You may stop using the Beta at any time and disconnect it from ChatGPT. Disconnecting or uninstalling may not automatically remove the local database or information retained by third-party services. See the Privacy Policy for deletion instructions.
+You may stop using the Beta at any time and disconnect it from the assistants you connected. The `memorysafe uninstall` command lists what is on the computer and removes it; it keeps your memories unless you pass `--purge`, and neither removes information retained by third-party services. See the Privacy Policy for deletion instructions.
 
 ## 12. Disclaimers
 

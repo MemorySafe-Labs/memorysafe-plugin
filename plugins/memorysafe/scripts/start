@@ -72,10 +72,37 @@ write_cli_shim() {
   mv -f "$temporary" "$shim"
 }
 
+write_mcp_shim() {
+  # A stable command for MCP clients MemorySafe has no plugin for -- Cursor, VS Code,
+  # Windsurf, anything that takes a command to launch. The only launchers are inside a
+  # host's plugin folder, whose path carries the version and changes on every update;
+  # this path does not. It is rewritten on every start, so it follows the update.
+  #
+  # It execs the launcher rather than the server: a generic client has the same
+  # connection deadline the bootstrap proxy exists to meet, and gets the same first-start
+  # build, progress page and degraded fallback as a host plugin.
+  mkdir -p "$DATA_ROOT/bin"
+  shim="$DATA_ROOT/bin/memorysafe-mcp"
+  temporary="$shim.tmp.$$"
+  {
+    echo '#!/bin/sh'
+    echo '# Written by the MemorySafe launcher on every start. Edits are overwritten.'
+    echo "launcher=$(quote "$SCRIPT_DIR/start")"
+    echo 'if [ ! -x "$launcher" ]; then'
+    echo "  echo 'MemorySafe: the plugin this shim points at is no longer installed. Start MemorySafe once from an assistant that has it, or install it again.' >&2"
+    echo '  exit 1'
+    echo 'fi'
+    echo 'exec "$launcher" "$@"'
+  } > "$temporary"
+  chmod 755 "$temporary"
+  mv -f "$temporary" "$shim"
+}
+
 # Written before choosing a path, not only once the runtime is ready: the install guide
 # tells people to run bin/memorysafe migrate straight after installing, and that first
 # session is a pending start. Until the runtime exists the shim says setup is unfinished.
 write_cli_shim >>"$INSTALL_LOG" 2>&1 || true
+write_mcp_shim >>"$INSTALL_LOG" 2>&1 || true
 
 if [ -x "$RUNTIME_PYTHON" ] && [ -f "$RUNTIME_DIR/ready" ]; then
   exec "$RUNTIME_PYTHON" "$SCRIPT_DIR/bootstrap_server.py"

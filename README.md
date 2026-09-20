@@ -1,4 +1,4 @@
-# MemorySafe 0.4.6
+# MemorySafe 0.4.7
 
 Private, governed memory for Claude Code, Claude Desktop and Codex, kept in one SQLite
 file on your own computer. macOS, Linux and Windows.
@@ -70,6 +70,19 @@ MemorySafe is installed. You do not need to download the extension again.
 Codex asks you to trust the plugin's hook before running it. MemorySafe works without
 it: the hook only makes automatic capture fire more reliably once you turn that on.
 
+## Other MCP clients
+
+Cursor, VS Code, Windsurf and anything else that speaks MCP share the same memory through
+one command at a fixed path, rewritten on every start so it follows updates:
+
+    ~/.local/share/MemorySafe/bin/memorysafe-mcp                  # Linux
+    ~/Library/Application\ Support/MemorySafe/bin/memorysafe-mcp  # macOS
+    %LOCALAPPDATA%\MemorySafe\bin\memorysafe-mcp.cmd              # Windows
+
+Give your client that path as the command to run, with no arguments. It needs MemorySafe
+installed in one of the three assistants above first, since it is that plugin's launcher
+the command reaches.
+
 ## First start
 
 The first time an assistant starts MemorySafe, it downloads uv from GitHub, a Python
@@ -129,6 +142,21 @@ run it yourself; it shows what it would change and changes nothing without `--ap
     ~/.local/share/MemorySafe/bin/memorysafe migrate                  # Linux
     ~/Library/Application\ Support/MemorySafe/bin/memorysafe migrate  # macOS
     %LOCALAPPDATA%\MemorySafe\bin\memorysafe.cmd migrate              # Windows
+
+## Removing MemorySafe
+
+`memorysafe uninstall` takes it back off this computer: the plugins through each
+assistant's own installer, the private runtime, the local state, and any hand-written
+registration left from an earlier install. It lists what it would remove and changes
+nothing without `--apply`:
+
+    ~/.local/share/MemorySafe/bin/memorysafe uninstall                  # Linux
+    ~/Library/Application\ Support/MemorySafe/bin/memorysafe uninstall  # macOS
+    %LOCALAPPDATA%\MemorySafe\bin\memorysafe.cmd uninstall              # Windows
+
+**Your memories stay** unless you add `--purge`, and a purge copies the database to your
+home folder first and prints where. Claude Desktop asks you to confirm what its extensions
+do, so removing its extension stays with you: **Settings → Extensions → MemorySafe**.
 
 ## About the numbers
 

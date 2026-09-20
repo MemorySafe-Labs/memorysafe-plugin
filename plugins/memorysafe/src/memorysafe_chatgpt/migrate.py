@@ -91,13 +91,89 @@ def _codex_ranges(lines: list[str]) -> list[tuple[int, int]]:
     return ranges
 
 
-def claude_registration_present(path: Path) -> bool:
+def _read_json(path: Path) -> Any:
     try:
-        config = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return False
+        return None
+
+
+def claude_registration_present(path: Path) -> bool:
+    config = _read_json(path)
     servers = config.get("mcpServers") if isinstance(config, dict) else None
     return isinstance(servers, dict) and SERVER_NAME in servers
+
+
+def claude_project_registrations(path: Path) -> list[str]:
+    """Projects in ~/.claude.json carrying their own memorysafe mcpServers entry.
+
+    Claude Code registers MCP servers per project as well as for the user, and migrate
+    only ever looked at the user-scope entry. A project entry survives every removal and
+    keeps listing MemorySafe's tools a second time in that project, which is the same
+    duplicate migrate exists to remove.
+    """
+
+    config = _read_json(path)
+    projects = config.get("projects") if isinstance(config, dict) else None
+    if not isinstance(projects, dict):
+        return []
+    return sorted(
+        name
+        for name, project in projects.items()
+        if isinstance(project, dict)
+        and isinstance(project.get("mcpServers"), dict)
+        and SERVER_NAME in project["mcpServers"]
+    )
+
+
+def project_mcp_files(home: Path) -> list[Path]:
+    """`.mcp.json` files registering MemorySafe, in the projects Claude Code knows about.
+
+    Only those projects: scanning the disk for .mcp.json would read folders the user
+    never pointed an assistant at.
+    """
+
+    config = _read_json(claude_config(home))
+    projects = config.get("projects") if isinstance(config, dict) else None
+    found = []
+    for name in sorted(projects) if isinstance(projects, dict) else []:
+        candidate = Path(name) / ".mcp.json"
+        entry = _read_json(candidate)
+        servers = entry.get("mcpServers") if isinstance(entry, dict) else None
+        if isinstance(servers, dict) and SERVER_NAME in servers:
+            found.append(candidate)
+    return found
+
+
+def remove_claude_project_registrations(path: Path) -> list[str]:
+    """Drop memorysafe from every project's mcpServers. Returns the projects changed."""
+
+    config = _read_json(path)
+    projects = config.get("projects") if isinstance(config, dict) else None
+    if not isinstance(projects, dict):
+        return []
+    changed = []
+    for name, project in projects.items():
+        servers = project.get("mcpServers") if isinstance(project, dict) else None
+        if isinstance(servers, dict) and servers.pop(SERVER_NAME, None) is not None:
+            changed.append(name)
+    if not changed:
+        return []
+    _backup(path)
+    _replace_text(path, json.dumps(config, indent=2))
+    return sorted(changed)
+
+
+def remove_project_mcp_file_entry(path: Path) -> bool:
+    """Drop memorysafe from one project's .mcp.json, leaving that project's other servers."""
+
+    config = _read_json(path)
+    servers = config.get("mcpServers") if isinstance(config, dict) else None
+    if not isinstance(servers, dict) or servers.pop(SERVER_NAME, None) is None:
+        return False
+    _backup(path)
+    _replace_text(path, json.dumps(config, indent=2))
+    return True
 
 
 def codex_registration_present(path: Path) -> bool:
@@ -211,6 +287,9 @@ def find_legacy(home: Path, data_root: Path) -> dict[str, Any]:
             "config": str(claude_config(home)),
             "registered": claude_registration_present(claude_config(home)),
             "plugin_installed": claude_code_plugin_installed(home),
+            # Per-project registrations, which the user-scope check above never saw.
+            "projects": claude_project_registrations(claude_config(home)),
+            "project_files": [str(path) for path in project_mcp_files(home)],
         },
         "codex": {
             "config": str(codex_config(home)),
@@ -226,8 +305,16 @@ def apply(home: Path) -> list[str]:
     """Remove each manual entry whose assistant also has the plugin. Returns the changed files."""
 
     changed = []
-    if claude_code_plugin_installed(home) and remove_claude_registration(claude_config(home)):
-        changed.append(str(claude_config(home)))
+    if claude_code_plugin_installed(home):
+        if remove_claude_registration(claude_config(home)):
+            changed.append(str(claude_config(home)))
+        # Same rule as the user-scope entry: only where that assistant has the plugin,
+        # because otherwise the hand-written entry is that project's only way in.
+        if remove_claude_project_registrations(claude_config(home)) and str(claude_config(home)) not in changed:
+            changed.append(str(claude_config(home)))
+        for project_file in project_mcp_files(home):
+            if remove_project_mcp_file_entry(project_file):
+                changed.append(str(project_file))
     if codex_plugin_installed(home) and remove_codex_registration(codex_config(home)):
         changed.append(str(codex_config(home)))
     return changed

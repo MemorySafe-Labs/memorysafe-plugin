@@ -40,6 +40,14 @@ The first start downloads uv, a Python, pinned packages and tokenizer data into 
 
 One install is enough: the other assistants on this computer connect to the same memory from the dashboard's **One memory, every assistant** panel, or with `connect` at the command's full path — `~/.local/share/MemorySafe/bin/memorysafe connect` on Linux, `"$HOME/Library/Application Support/MemorySafe/bin/memorysafe" connect` on macOS, `%LOCALAPPDATA%\MemorySafe\bin\memorysafe.cmd connect` on Windows. It is a dry run: show the user the list. Run it again with `--apply` only after they confirm, then ask them to restart each assistant it connected. It installs through each assistant's own plugin installer, never by editing configuration. Claude Desktop is never connected by it: the user confirms extensions inside Claude Desktop, so pass on the one step it reports.
 
+## Other MCP clients
+
+For an MCP client MemorySafe has no plugin for — Cursor, VS Code, Windsurf — give it the launcher at its fixed path as the command to run, with no arguments: `~/.local/share/MemorySafe/bin/memorysafe-mcp` on Linux, `~/Library/Application Support/MemorySafe/bin/memorysafe-mcp` on macOS, `%LOCALAPPDATA%\MemorySafe\bin\memorysafe-mcp.cmd` on Windows. It is written on every start, so it follows updates, and it needs MemorySafe installed in one of the three assistants above first. Do not edit that client's configuration yourself unless the user asks; show them the path and the block to paste.
+
+## Removing MemorySafe
+
+When the user asks to remove or uninstall MemorySafe, run `uninstall` at the command's full path — `~/.local/share/MemorySafe/bin/memorysafe uninstall` on Linux, `"$HOME/Library/Application Support/MemorySafe/bin/memorysafe" uninstall` on macOS, `%LOCALAPPDATA%\MemorySafe\bin\memorysafe.cmd uninstall` on Windows. It is a dry run: show them the list, including the sizes. Run it again with `--apply` only after they confirm. Their memories are kept unless they also ask for `--purge`, which copies the database to their home folder first; never add `--purge` on your own. Claude Desktop's extension is theirs to remove in Settings → Extensions, and the command says so. Ask them to restart each assistant afterwards.
+
 ## Troubleshooting
 
 Call `memorysafe_doctor` first and work through its `next_actions` in order. Treat it as read-only evidence. Never inspect memory contents, runtime-key files, or conversation history during diagnosis.

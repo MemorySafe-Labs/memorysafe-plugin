@@ -1,11 +1,11 @@
 # MemorySafe Beta Privacy Policy
 
-**Effective date:** August 3, 2026  
-**Version:** 0.1 - Private Beta
+**Effective date:** September 20, 2026  
+**Version:** 0.2 - Private Beta
 
 This Privacy Policy explains how MemorySafe Labs Inc. ("MemorySafe Labs," "we," "us," or "our") handles personal information in connection with the MemorySafe private beta software, connector, dashboard, and support activities (the "Beta").
 
-This Policy applies to information handled by MemorySafe Labs and the MemorySafe Beta. It does not replace the privacy terms that apply to ChatGPT, OpenAI, your operating system, your device-backup provider, or other services you choose to use.
+This Policy applies to information handled by MemorySafe Labs and the MemorySafe Beta. It does not replace the privacy terms that apply to the AI assistants you connect MemorySafe to or their providers, such as Anthropic or OpenAI, or to your operating system, your device-backup provider, or other services you choose to use.
 
 ## 1. Who we are
 
@@ -18,8 +18,10 @@ MemorySafe Labs Inc. is a corporation incorporated under the Canada Business Cor
 
 - Memory content is stored primarily in a local SQLite database on the computer running the connector.
 - MemorySafe Labs does not operate a central memory-content database for this private beta.
-- The Beta does not independently copy complete ChatGPT conversation history or read ChatGPT's built-in memory.
-- ChatGPT sends app requests to the local connector and receives app responses through an authorized OpenAI tunnel connection. Content included in those requests and responses is processed by OpenAI under the terms that apply to the user's ChatGPT account or workspace.
+- One local database serves every compatible assistant on that computer: in this beta, Claude Code, Claude Desktop, and Codex, and, on macOS only, ChatGPT.
+- The Beta does not independently copy conversation history and does not read an assistant's own built-in memory.
+- For an assistant running on the same computer, requests and responses travel locally between it and the connector. Whatever that assistant then includes in its own conversation is sent to its provider under the user's agreement with that provider.
+- ChatGPT is the exception: it reaches the connector through OpenAI's Secure MCP Tunnel, so those requests and responses pass through OpenAI's systems.
 - Automatic Mode is optional and off by default for a new installation.
 - Automatic Mode is designed to save only short, directly stated, durable, non-sensitive facts from chats where MemorySafe is selected.
 - The Beta does not currently add application-level encryption to its local database.
@@ -28,7 +30,7 @@ MemorySafe Labs Inc. is a corporation incorporated under the Canada Business Cor
 
 ### 3.1 Memory content
 
-The Beta may process and store content that you explicitly ask ChatGPT to remember or that ChatGPT submits as an eligible candidate while Automatic Mode is enabled. Examples include preferences, project details, decisions, recurring tasks, and other durable facts.
+The Beta may process and store content that you explicitly ask an assistant to remember, or that the assistant submits as an eligible candidate while Automatic Mode is enabled. Examples include preferences, project details, decisions, recurring tasks, and other durable facts.
 
 ### 3.2 Memory metadata
 
@@ -46,9 +48,11 @@ For each memory, the local database may store:
 
 The local database may store whether Automatic Mode is enabled and decision records such as store, protect, merge, skip, and forget events. These records may include identifiers, reasons, timestamps, and content-size measurements. The current Beta's decision records do not intentionally create a separate full copy of every chat message.
 
-### 3.4 ChatGPT app requests and responses
+### 3.4 Requests and responses from the assistants
 
-When MemorySafe is selected in a chat, ChatGPT may send the local connector an app request containing a memory candidate, search query, memory identifier, or settings instruction. The connector returns an app response, which may include memory content, metadata, health statistics, or confirmation of an action. These transmissions pass through OpenAI's systems.
+An assistant may send the local connector a request containing a memory candidate, search query, memory identifier, or settings instruction. The connector returns a response, which may include memory content, metadata, health statistics, or confirmation of an action.
+
+For Claude Code, Claude Desktop, and Codex these transmissions are local to the computer, between that assistant and the connector. For ChatGPT on macOS they pass through OpenAI's Secure MCP Tunnel and therefore through OpenAI's systems.
 
 ### 3.5 Support and beta feedback
 
@@ -90,11 +94,13 @@ If the Beta detects potentially sensitive content during Automatic Mode, it is d
 
 ## 7. How information is shared
 
-### 7.1 OpenAI and ChatGPT
+### 7.1 The assistants you connect, and their providers
 
-Information included in a MemorySafe app request or response is transmitted through and processed by OpenAI. OpenAI handles that information under the terms, privacy policy, data controls, and workspace settings that apply to your ChatGPT account. OpenAI and MemorySafe Labs act under their respective agreements and responsibilities; MemorySafe Labs does not control OpenAI's independent processing.
+Memory content reaches the assistant you are using, because that is what asking it to save, find, display, or use a memory means. Whatever that assistant then includes in its own conversation is transmitted to and processed by its provider -- Anthropic for Claude Code and Claude Desktop, OpenAI for Codex and ChatGPT -- under the terms, privacy policy, data controls, and workspace settings that apply to your account with that provider. For ChatGPT on macOS, the requests and responses themselves also pass through OpenAI's tunnel.
 
-OpenAI privacy information is available at https://openai.com/privacy/ and information about apps in ChatGPT is available at https://help.openai.com/en/articles/11487775-apps-in-chatgpt.
+Each provider and MemorySafe Labs act under their respective agreements and responsibilities; MemorySafe Labs does not control a provider's independent processing.
+
+Anthropic privacy information is available at https://www.anthropic.com/legal/privacy and OpenAI's at https://openai.com/privacy/.
 
 ### 7.2 Service providers
 
@@ -116,7 +122,7 @@ The primary MemorySafe database is stored on the computer running the connector 
 
 Your operating system, backup software, cloud-drive configuration, or device-management tools may copy the local database. Those copies are controlled by the relevant user, organization, or third-party provider.
 
-App requests and responses are processed through OpenAI's systems and may be processed outside Quebec or Canada according to the user's OpenAI account, workspace, and applicable OpenAI terms. Support email may also be processed outside Quebec or Canada by the email provider. Privacy laws in another jurisdiction may differ from those in your location.
+Content an assistant includes in its own conversation, and, for ChatGPT on macOS, the requests and responses themselves, are processed by that assistant's provider and may be processed outside Quebec or Canada according to the user's account, workspace, and applicable terms with that provider. Support email may also be processed outside Quebec or Canada by the email provider. Privacy laws in another jurisdiction may differ from those in your location.
 
 ## 9. Retention, forgetting, and deletion
 
@@ -126,11 +132,11 @@ Local memory content and metadata remain in the local database until the user ta
 
 ### 9.2 Current Forget behavior
 
-In Beta version 0.2.0, the Forget action removes a selected memory from active recall and marks it as deleted. The underlying memory record, including its content, remains in the local SQLite database. It is not returned by normal memory searches.
+In the current Beta, the Forget action removes a selected memory from active recall and marks it as deleted. The underlying memory record, including its content, remains in the local SQLite database. It is not returned by normal memory searches.
 
 To completely erase the current local memory store, the user must securely delete the local `data/memorysafe.sqlite3` database and its related SQLite sidecar files, if present, after stopping the connector. This deletes all MemorySafe memories and operational records on that installation. Users who need assistance may contact contact@memorysafe.ca.
 
-Deleting a local MemorySafe record does not delete copies retained in ChatGPT conversation history, OpenAI systems, device backups, support correspondence, or other third-party services. Those copies are governed by the applicable service and user settings.
+Deleting a local MemorySafe record does not delete copies retained in an assistant's conversation history, in a provider's systems, in device backups, in support correspondence, or in other third-party services. Those copies are governed by the applicable service and user settings.
 
 ### 9.3 Support records
 
@@ -138,9 +144,9 @@ We retain support and beta-feedback correspondence only as long as reasonably ne
 
 ## 10. Security
 
-We use measures intended to protect the Beta, including local storage, an authorized tunnel connection, access credentials, limited tool actions, and Automatic Mode filters. However, no system is completely secure.
+We use measures intended to protect the Beta, including local storage, a dashboard reachable only from the computer it runs on, access credentials, an authorized tunnel connection where one is used, limited tool actions, and Automatic Mode filters. However, no system is completely secure.
 
-The current Beta does not add application-level encryption to the local SQLite database. Users should enable device encryption, use a strong device password, protect their ChatGPT and operating-system accounts, restrict access to the computer, maintain appropriate backups, and never paste tunnel keys or API credentials into a chat.
+The current Beta does not add application-level encryption to the local SQLite database. Users should enable device encryption, use a strong device password, protect their assistant and operating-system accounts, restrict access to the computer, maintain appropriate backups, and never paste tunnel keys or API credentials into a chat.
 
 If you believe MemorySafe information has been accessed or disclosed without authorization, contact us promptly at contact@memorysafe.ca.
 

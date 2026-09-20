@@ -6,16 +6,23 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
 
 from .bootstrap_catalog import VERSION
-from .server import main as run_mcp_server
+# The window opener lives with the dashboard tool that normally calls it; a first start
+# wants the same window, not a second way of making one.
+from .server import _open_dashboard_window, main as run_mcp_server
 
 
 PRODUCT = "MemorySafe Beta"
 _RECORD_NAME = "dashboard.json"
+_OPENED_NAME = "dashboard-opened.json"
+# How long a first start waits for the dashboard it just spawned to answer before
+# giving up on showing it. Off the MCP server's path, in a thread of its own.
+_FIRST_OPEN_TIMEOUT_SECONDS = 20.0
 
 
 def _dashboard_is_running(host: str, port: int) -> bool:
@@ -113,6 +120,59 @@ def _write_dashboard_record(state_dir: Path, pid: int) -> None:
     os.replace(temporary, target)
 
 
+def _is_a_first_start(state_dir: Path) -> bool:
+    """Has this computer ever had a MemorySafe dashboard started for it?
+
+    The dashboard is where an install proves itself and where the other assistants get
+    connected, so someone who never opens it never sees either. Opening it once removes
+    the "now type this address" step from every guide. Once, though: a dashboard that
+    reappears on every start is spam.
+
+    Two records have to be absent. `dashboard-opened.json` is this feature's own, written
+    before the window is attempted so a failure to open is not retried forever.
+    `dashboard.json` is older than this feature and is written every time a launcher
+    starts a dashboard, which is what keeps an existing install from getting a window the
+    first time it updates to a version that has this: it has started one before.
+    """
+
+    if (state_dir / _OPENED_NAME).exists():
+        return False
+    return _read_dashboard_record(state_dir) is None
+
+
+def _mark_dashboard_opened(state_dir: Path) -> None:
+    target = state_dir / _OPENED_NAME
+    temporary = target.with_name(target.name + ".tmp")
+    try:
+        temporary.write_text(
+            json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "version": VERSION}),
+            encoding="utf-8",
+        )
+        os.replace(temporary, target)
+    except OSError:
+        # Not being able to record it is not a reason to skip the window; the worst
+        # case is one more window on the next start.
+        pass
+
+
+def _open_dashboard_when_ready(host: str, port: int) -> None:
+    """Wait for the dashboard just spawned to answer, then show it.
+
+    A first start has a runtime to build, and the window must not appear before there is
+    a page behind it. Nothing here may raise: this runs while the MCP server is serving.
+    """
+
+    deadline = time.monotonic() + _FIRST_OPEN_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if _dashboard_status(host, port) is not None:
+            try:
+                _open_dashboard_window(f"http://{host}:{port}/dashboard")
+            except Exception:
+                pass
+            return
+        time.sleep(0.25)
+
+
 def _replace_stale_dashboard(host: str, port: int, state_dir: Path) -> bool:
     """Stop a dashboard this launcher started from an older plugin. True once the port is free.
 
@@ -199,6 +259,9 @@ def _start_dashboard() -> None:
     state_dir = Path(
         os.environ.get("MEMORYSAFE_STATE_DIR") or _default_state_dir()
     ).expanduser()
+    # Read before a record is written for the dashboard started below, which would
+    # otherwise make every start look like one that had come before.
+    first_start = _is_a_first_start(state_dir)
     if _dashboard_is_running(host, port) and not _replace_stale_dashboard(host, port, state_dir):
         return
 
@@ -220,6 +283,15 @@ def _start_dashboard() -> None:
         _write_dashboard_record(state_dir, int(process.pid))
     except OSError:
         pass
+    if first_start:
+        # Marked before the attempt, not after it: whatever happens next, this computer
+        # has had its one window.
+        _mark_dashboard_opened(state_dir)
+        # In a thread, because waiting for the page would hold up the MCP server this
+        # launcher is about to run, and the host is timing that.
+        threading.Thread(
+            target=_open_dashboard_when_ready, args=(host, port), daemon=True
+        ).start()
 
 
 def main() -> None:

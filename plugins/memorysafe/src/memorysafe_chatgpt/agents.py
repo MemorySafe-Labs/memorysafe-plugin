@@ -211,6 +211,8 @@ def _entry(agent_id: str, label: str) -> dict[str, Any]:
         "command": None,
         # What the user has to do themselves, when connecting it is not automatic.
         "next_step": None,
+        # What connecting this one is actually for, when the plain wording would mislead.
+        "note": None,
     }
 
 
@@ -281,13 +283,42 @@ def _claude_desktop(home: Path, env: Mapping[str, str], platform: str) -> dict[s
     return entry
 
 
+def _note_what_connecting_claude_code_is_for(entries: list[dict[str, Any]]) -> None:
+    """Say what the Claude Code row is actually offering, once the extension is in.
+
+    The Claude desktop app exposes its extensions to its own Code tab, so a session there
+    already reaches MemorySafe through the extension. Connecting the plugin as well means
+    every MemorySafe tool is listed twice in those sessions, about 1,800 tokens a
+    conversation (issue #7).
+
+    The row still offers it, and should: Claude Code in a terminal cannot see the
+    extension, and the plugin is its only way in. Anyone who has the claude command almost
+    certainly uses it there. What was wrong was the wording -- "Installed here. Not
+    connected yet." reads as something missing, with nothing said about the copy they
+    already have or the duplication they are about to add.
+    """
+
+    found = {entry["id"]: entry for entry in entries}
+    desktop, code = found.get("claude_desktop"), found.get("claude_code")
+    if desktop is None or code is None or desktop.get("how") != "extension":
+        return
+    if code.get("connected") or not code.get("can_connect"):
+        return
+    code["note"] = (
+        "Installed here. Sessions in the Claude desktop app already reach MemorySafe through the "
+        "extension, so connect this for Claude Code in a terminal, which cannot see it."
+    )
+
+
 def inventory(
     home: Path | None = None, env: Mapping[str, str] | None = None, platform: str | None = None
 ) -> list[dict[str, Any]]:
     home = home or Path.home()
     env = os.environ if env is None else env
     platform = platform or sys.platform
-    return [_claude_desktop(home, env, platform), _claude_code(home, env, platform), _codex(home, env, platform)]
+    entries = [_claude_desktop(home, env, platform), _claude_code(home, env, platform), _codex(home, env, platform)]
+    _note_what_connecting_claude_code_is_for(entries)
+    return entries
 
 
 def read_auto_connect(state_dir: Path) -> bool | None:

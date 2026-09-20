@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import quote, urlencode, urlparse
 
@@ -137,7 +138,13 @@ def status_payload(paths: SetupPaths) -> dict[str, Any]:
         "tunnel_configured": bool(TUNNEL_ID_PATTERN.fullmatch(tunnel_id)),
         "tunnel_id": tunnel_id if TUNNEL_ID_PATTERN.fullmatch(tunnel_id) else "",
         "connector_online": connector_ready(paths),
-        "terms_accepted": bool(consent.get("terms_accepted")),
+        "terms_accepted": accepted_the_current_documents(consent),
+        # Told apart from a first run so the page can say why it is asking again,
+        # rather than looking like it lost the answer.
+        "terms_update_pending": bool(consent.get("terms_accepted"))
+        and not accepted_the_current_documents(consent),
+        "accepted_terms_version": consent.get("terms_version") or "",
+        "current_terms_version": TERMS_VERSION,
         "automatic_mode": store.automatic_mode_enabled(),
         "connect_url": paths.connect_url,
     }
@@ -264,6 +271,34 @@ def save_connection(paths: SetupPaths, runtime_key: str, tunnel_id: str) -> None
         pass
 
 
+# The versions consent.json records. They are the ones printed in the documents
+# themselves, and test_legal_documents fails if they drift apart: a consent record
+# naming a version the user was never shown says nothing about what they agreed to.
+TERMS_VERSION = "0.2"
+PRIVACY_VERSION = "0.2"
+
+
+def accepted_the_current_documents(consent: Mapping[str, Any]) -> bool:
+    """Did this acceptance cover the documents a reader would be shown now?
+
+    Section 15 of the Terms promises reasonable notice of material changes, and the
+    documents moved to 0.2 when they were corrected to describe Claude Code, Claude
+    Desktop and Codex rather than ChatGPT alone. Nothing compared the recorded version
+    with the current one, so everyone who accepted 0.1 would have stayed recorded as
+    having accepted 0.1 for good, and never been asked.
+
+    Nothing outside the setup page reads consent, so re-asking gates no memory, no tool
+    and no assistant: it reopens the agreement step and says why.
+    """
+
+    if not consent.get("terms_accepted"):
+        return False
+    return (
+        consent.get("terms_version") == TERMS_VERSION
+        and consent.get("privacy_version") == PRIVACY_VERSION
+    )
+
+
 def save_consent(paths: SetupPaths, terms_accepted: bool, automatic_mode: bool) -> None:
     if not terms_accepted:
         raise ValueError("Accept the Beta Terms and acknowledge the Privacy Policy to continue.")
@@ -272,8 +307,8 @@ def save_consent(paths: SetupPaths, terms_accepted: bool, automatic_mode: bool) 
         {
             "schema_version": 1,
             "terms_accepted": True,
-            "terms_version": "0.1",
-            "privacy_version": "0.1",
+            "terms_version": TERMS_VERSION,
+            "privacy_version": PRIVACY_VERSION,
             "accepted_at": utc_now(),
             "automatic_mode": bool(automatic_mode),
         },
@@ -346,7 +381,7 @@ SETUP_PAGE = r"""<!doctype html>
   <section class="route"><div class="endpoint"><span>Memory lives on</span><strong>This computer</strong></div><div class="arrow">↔</div><div class="endpoint"><span>Use MemorySafe from</span><strong>Your assistants</strong><span id="agents-summary" class="offline">Looking for them…</span></div></section>
   <section class="steps">
     <article class="step done"><div class="number">✓</div><div><h2>MemorySafe is installed</h2><p>The dashboard and the local connector are ready on this computer.</p><div class="actions"><a class="button" href="/dashboard">Open MemorySafe dashboard</a></div></div></article>
-    <article class="step" id="agreement-step"><div class="number">2</div><div><h2>Review the private-beta agreement</h2><p>Legal acceptance and optional Automatic Mode use separate choices.</p><label class="check"><input id="terms" type="checkbox"> <span>I agree to the <a href="/legal/terms" target="_blank">Beta Terms of Use</a> and acknowledge the <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</span></label><label class="check"><input id="automatic" type="checkbox"> <span><strong id="automatic-state">Automatic capture is off.</strong> <span id="automatic-help">Tick this to let MemorySafe save concise, durable, non-sensitive facts as you work.</span> Secrets, ID numbers, contact details, addresses and health information are never captured this way. You can change this whenever you like from the dashboard.</span></label><div class="actions"><button id="save-consent">Accept and continue</button></div><div id="consent-message" class="message"></div></div></article>
+    <article class="step" id="agreement-step"><div class="number">2</div><div><h2>Review the private-beta agreement</h2><p>Legal acceptance and optional Automatic Mode use separate choices.</p><label class="check"><input id="terms" type="checkbox"> <span>I agree to the <a href="/legal/terms" target="_blank">Beta Terms of Use</a> and acknowledge the <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</span></label><label class="check"><input id="automatic" type="checkbox"> <span><strong id="automatic-state">Automatic capture is off.</strong> <span id="automatic-help">Tick this to let MemorySafe save concise, durable, non-sensitive facts as you work.</span> Secrets, ID numbers, contact details, addresses and health information are never captured this way. You can change this whenever you like from the dashboard.</span></label><div class="actions"><button id="save-consent">Accept and continue</button></div><div id="terms-update" class="message"></div><div id="consent-message" class="message"></div></div></article>
     <article class="step" id="assistants-step"><div class="number">3</div><div><h2>Connect your assistants</h2><p>Every assistant you connect shares the same memory. Each one is installed through its own installer; Claude Desktop asks you to confirm its extension yourself.</p><div class="agent-list" id="agent-list"></div><div id="agents-message" class="message"></div></div></article>
   </section>
   <section id="chatgpt-steps" hidden>
@@ -366,7 +401,7 @@ async function api(path,options={}){const response=await fetch(path,{cache:'no-s
 // The label was fixed text, "Automatic capture is off.", beside a box that could be ticked --
 // so a tester saw it ticked and "off" at once. It now follows the box.
 function syncAutomatic(){const on=byId('automatic').checked;byId('automatic-state').textContent=on?'Automatic capture is on.':'Automatic capture is off.';byId('automatic-help').textContent=on?'MemorySafe saves concise, durable, non-sensitive facts as you work. Untick this to stop.':'Tick this to let MemorySafe save concise, durable, non-sensitive facts as you work.'}
-function render(s){byId('device-id').textContent=s.device_id;if(!consentDirty){byId('terms').checked=Boolean(s.terms_accepted);byId('automatic').checked=Boolean(s.automatic_mode)}syncAutomatic();if(!byId('tunnel-id').value&&s.tunnel_id)byId('tunnel-id').value=s.tunnel_id;byId('agreement-step').classList.toggle('done',Boolean(s.terms_accepted));byId('connection-step').classList.toggle('done',Boolean(s.runtime_key_saved&&s.tunnel_configured));byId('chatgpt-step').classList.toggle('done',Boolean(s.connector_online));byId('key-note').textContent=s.runtime_key_saved?'A private runtime key is already saved. Leave the field empty to keep it.':'Paste the runtime key once; it will remain only on this Mac.';const online=byId('online-label');online.textContent=s.connector_online?'ONLINE · READY':'DESKTOP CONNECTOR OFFLINE';online.className=s.connector_online?'online':'offline';byId('connect-button').classList.toggle('disabled',!(s.terms_accepted&&s.runtime_key_saved&&s.tunnel_configured));}
+function render(s){byId('device-id').textContent=s.device_id;if(!consentDirty){byId('terms').checked=Boolean(s.terms_accepted);byId('automatic').checked=Boolean(s.automatic_mode)}syncAutomatic();if(!byId('tunnel-id').value&&s.tunnel_id)byId('tunnel-id').value=s.tunnel_id;byId('agreement-step').classList.toggle('done',Boolean(s.terms_accepted));const update=byId('terms-update');if(s.terms_update_pending){update.textContent=`The Beta Terms of Use and Privacy Policy changed. You accepted version ${s.accepted_terms_version||'an earlier version'}; version ${s.current_terms_version} says which assistants MemorySafe now works with and where your memories go. Please read them and accept again. Nothing has stopped working, and your memories are untouched.`;update.style.display='block'}else{update.style.display='none'}byId('connection-step').classList.toggle('done',Boolean(s.runtime_key_saved&&s.tunnel_configured));byId('chatgpt-step').classList.toggle('done',Boolean(s.connector_online));byId('key-note').textContent=s.runtime_key_saved?'A private runtime key is already saved. Leave the field empty to keep it.':'Paste the runtime key once; it will remain only on this Mac.';const online=byId('online-label');online.textContent=s.connector_online?'ONLINE · READY':'DESKTOP CONNECTOR OFFLINE';online.className=s.connector_online?'online':'offline';byId('connect-button').classList.toggle('disabled',!(s.terms_accepted&&s.runtime_key_saved&&s.tunnel_configured));}
 async function refresh(){try{render(await api('/api/status'))}catch(e){byId('online-label').textContent='STATUS UNAVAILABLE'}}
 byId('terms').addEventListener('change',()=>{consentDirty=true});byId('automatic').addEventListener('change',()=>{consentDirty=true;syncAutomatic()});
 byId('save-consent').addEventListener('click',async()=>{try{await api('/api/consent',{method:'POST',body:JSON.stringify({terms_accepted:byId('terms').checked,automatic_mode:byId('automatic').checked})});consentDirty=false;show('consent-message','Agreement saved on this computer.');await refresh()}catch(e){show('consent-message',e.message,true)}});
@@ -378,7 +413,7 @@ byId('chatgpt-steps').hidden=!__CHATGPT_AVAILABLE__;
 // Where a tester on Windows went looking for how to add Codex. Text only, never markup:
 // a next step carries a URL.
 function node(tag,cls,text){const el=document.createElement(tag);if(cls)el.className=cls;if(text!==undefined)el.textContent=String(text);return el}
-function renderAgents(agents){const list=byId('agent-list');list.replaceChildren();const present=agents.filter(a=>a.present);const connected=present.filter(a=>a.connected).length;const summary=byId('agents-summary');summary.textContent=present.length?`${connected} OF ${present.length} CONNECTED`:'NONE FOUND YET';summary.className=present.length&&connected===present.length?'online':'offline';byId('assistants-step').classList.toggle('done',present.length>0&&connected===present.length);if(!present.length){list.append(node('small','','No assistants found on this computer yet.'))}for(const agent of present){const row=node('div','agent');const copy=node('div');copy.append(node('strong','',agent.label));copy.append(node('small','',agent.connected?`Connected through its ${agent.how}.`:agent.can_connect?'Installed here. Not connected yet.':String(agent.next_step??'')));row.append(copy);if(agent.connected){row.append(node('span','state on','CONNECTED'))}else if(agent.can_connect){const button=node('button','','Connect');button.type='button';button.addEventListener('click',()=>connectAgent(agent,button));row.append(button)}else{row.append(node('span','state off','ONE STEP LEFT'))}list.append(row)}}
+function renderAgents(agents){const list=byId('agent-list');list.replaceChildren();const present=agents.filter(a=>a.present);const connected=present.filter(a=>a.connected).length;const summary=byId('agents-summary');summary.textContent=present.length?`${connected} OF ${present.length} CONNECTED`:'NONE FOUND YET';summary.className=present.length&&connected===present.length?'online':'offline';byId('assistants-step').classList.toggle('done',present.length>0&&connected===present.length);if(!present.length){list.append(node('small','','No assistants found on this computer yet.'))}for(const agent of present){const row=node('div','agent');const copy=node('div');copy.append(node('strong','',agent.label));copy.append(node('small','',agent.connected?`Connected through its ${agent.how}.`:agent.can_connect?String(agent.note??'Installed here. Not connected yet.'):String(agent.next_step??'')));row.append(copy);if(agent.connected){row.append(node('span','state on','CONNECTED'))}else if(agent.can_connect){const button=node('button','','Connect');button.type='button';button.addEventListener('click',()=>connectAgent(agent,button));row.append(button)}else{row.append(node('span','state off','ONE STEP LEFT'))}list.append(row)}}
 async function loadAgents(){try{renderAgents((await api('/api/agents')).agents||[])}catch(e){byId('agents-summary').textContent='UNAVAILABLE'}}
 async function connectAgent(agent,button){button.disabled=true;button.textContent='Connecting…';show('agents-message',`Installing MemorySafe in ${agent.label}. This can take a minute.`);try{const payload=await api('/api/agents/connect',{method:'POST',body:JSON.stringify({agent:agent.id})});show('agents-message',String(payload.result?.message??''),!payload.ok);renderAgents(payload.agents||[])}catch(e){show('agents-message',e.message,true);button.disabled=false;button.textContent='Connect'}}
 loadAgents();

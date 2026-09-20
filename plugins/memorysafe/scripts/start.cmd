@@ -43,6 +43,7 @@ set "SETUP_PORT=%MEMORYSAFE_SETUP_PORT%"
 if "%SETUP_PORT%"=="" set "SETUP_PORT=8765"
 
 call :write_cli_shim
+call :write_mcp_shim
 
 if exist "%RUNTIME_PYTHON%" if exist "%RUNTIME_DIR%\ready" (
   "%RUNTIME_PYTHON%" "%SCRIPT_DIR%bootstrap_server.py"
@@ -121,6 +122,29 @@ set "SHIM_TMP=%SHIM%.tmp"
   echo "%RUNTIME_PYTHON%" -m memorysafe_chatgpt.cli %%*
 ) > "%SHIM_TMP%" 2>nul
 move /y "%SHIM_TMP%" "%SHIM%" 1>nul 2>nul
+exit /b 0
+
+:write_mcp_shim
+rem A stable command for MCP clients MemorySafe has no plugin for -- Cursor, VS Code,
+rem Windsurf, anything that takes a command to launch. The only launchers are inside a
+rem host's plugin folder, whose path carries the version and changes on every update;
+rem this path does not. It is rewritten on every start, so it follows the update.
+rem It calls the launcher rather than the server: a generic client has the same
+rem connection deadline the bootstrap proxy exists to meet, and gets the same first-start
+rem build, progress page and degraded fallback as a host plugin.
+if not exist "%DATA_ROOT%\bin" mkdir "%DATA_ROOT%\bin" 2>nul
+set "MCP_SHIM=%DATA_ROOT%\bin\memorysafe-mcp.cmd"
+set "MCP_SHIM_TMP=%MCP_SHIM%.tmp"
+(
+  echo @echo off
+  echo rem Written by the MemorySafe launcher on every start. Edits are overwritten.
+  echo if not exist "%SCRIPT_DIR%start.cmd" ^(
+  echo   echo MemorySafe: the plugin this shim points at is no longer installed. Start MemorySafe once from an assistant that has it, or install it again.^>^&2
+  echo   exit /b 1
+  echo ^)
+  echo "%SCRIPT_DIR%start.cmd" %%*
+) > "%MCP_SHIM_TMP%" 2>nul
+move /y "%MCP_SHIM_TMP%" "%MCP_SHIM%" 1>nul 2>nul
 exit /b 0
 
 :find_python
