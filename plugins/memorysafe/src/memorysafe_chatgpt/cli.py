@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from .doctor import create_support_bundle, run_doctor
@@ -189,6 +190,14 @@ def _print_uninstall(items: list[dict], result: dict, applied: bool, purge: bool
         print(f"\n  Your memories were copied to {result['memories_backup']} before being deleted.")
     for failure in result["failed"]:
         print(f"\n  Could not remove {failure}")
+    if result.get("still_in_use"):
+        # A list of WinError 5 lines tells the reader nothing they can act on. The
+        # first uninstall on this machine left all 268 MB behind for exactly this
+        # reason: MemorySafe was running in every assistant at the time.
+        print(
+            "\n  Those are in use, which means MemorySafe is still running. Close Claude Desktop,"
+            "\n  Claude Code and Codex, then run this again -- it picks up where it left off."
+        )
     if not applied:
         print("\nRun  memorysafe uninstall --apply  to remove these. Each file it edits is backed up first.")
         if not purge:
@@ -235,7 +244,35 @@ def _print_connect(agents: list[dict], results: list[dict], applied: bool) -> No
         print(f"\nRestart {' and '.join(restart)} to start using MemorySafe there.")
 
 
+def _write_utf8_whatever_the_console_is() -> None:
+    """Stop a legacy Windows code page from killing the command mid-report.
+
+    Python talks to a real Windows console in UTF-16 and is fine there. Redirect the
+    output and it falls back to the locale encoding instead -- cp1252 on a French or
+    English Windows -- and the first character outside it raises UnicodeEncodeError.
+
+    That is not a corner case here. `memorysafe doctor` prints a tick for every passing
+    check, `uninstall` prints an arrow for every item it would remove, and `find` prints
+    memory content, which can hold any character a person typed. Redirected output is
+    also exactly how an assistant runs these commands: the skill tells it to run the
+    doctor and read what comes back, and capturing output is a pipe.
+
+    The doctor's own comment already records one crash of this shape, from a KeyError on
+    an unknown status. Same command, same lesson: the report has to survive its own
+    contents.
+    """
+
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            # Not a reconfigurable text stream (a capture in a test, an odd platform).
+            # Nothing here is worth failing a command over.
+            pass
+
+
 def main() -> None:
+    _write_utf8_whatever_the_console_is()
     parser = argparse.ArgumentParser(
         prog="memorysafe",
         description="Read, write and inspect MemorySafe locally. Only `connect --apply` reaches the network, "

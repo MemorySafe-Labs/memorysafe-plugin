@@ -22,9 +22,11 @@ This is the same inventory `connect` builds, read backwards:
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -250,6 +252,51 @@ def back_up_memories(home: Path, data_root: Path) -> Path | None:
     return target
 
 
+# How hard to try before calling a path stuck, and how long to wait between tries.
+#
+# Windows refuses a delete for a moment after a file has been touched -- a process
+# closing its handles, or the virus scanner reading what was just written -- and the
+# same removal succeeds a moment later. Measured on this machine on 20 September, with
+# every MemorySafe process already stopped: three `--apply` runs in a row each freed
+# more than 100 MB and then stopped on a different file, and a plain retry loop cleared
+# what was left in a few passes. Nothing was read-only and nothing held a handle.
+_REMOVE_ATTEMPTS = 6
+_REMOVE_BACKOFF_SECONDS = 0.4
+
+
+def _is_busy(error: OSError) -> bool:
+    """Is this Windows saying "not right now" rather than "no"?
+
+    ERROR_ACCESS_DENIED (5) and ERROR_SHARING_VIOLATION (32) are what a locked file
+    raises. Only these are worth retrying: a path that is genuinely not ours stays not
+    ours, and retrying it six times only makes the uninstall slower.
+    """
+
+    if getattr(error, "winerror", None) in (5, 32):
+        return True
+    return error.errno in (errno.EACCES, errno.EBUSY, errno.EPERM)
+
+
+def remove_path(target: Path) -> None:
+    """Delete a file or a tree, waiting out a lock that is about to clear.
+
+    Raises the last error if it never clears, so the caller still reports it. An error
+    that is not a lock is raised at once.
+    """
+
+    for attempt in range(_REMOVE_ATTEMPTS):
+        try:
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink(missing_ok=True)
+            return
+        except OSError as error:
+            if not _is_busy(error) or attempt == _REMOVE_ATTEMPTS - 1:
+                raise
+            time.sleep(_REMOVE_BACKOFF_SECONDS * (attempt + 1))
+
+
 def apply(
     home: Path | None = None,
     env: Mapping[str, str] | None = None,
@@ -269,6 +316,9 @@ def apply(
     failed: list[str] = []
     manual: list[str] = []
     backup: Path | None = None
+    # Set when something could not be removed because it was in use. The remedy is
+    # the user's to apply -- MemorySafe cannot close the assistant running it.
+    busy = False
 
     for item in inventory(home, env, platform, data_root):
         if item["manual"]:
@@ -298,13 +348,12 @@ def apply(
                 failed.append(f"{item['label']}: {error}")
         for path in item["paths"]:
             try:
-                target = Path(path)
-                if target.is_dir():
-                    shutil.rmtree(target)
-                else:
-                    target.unlink(missing_ok=True)
+                remove_path(Path(path))
             except OSError as error:
                 failed.append(f"{path}: {error}")
+                # What the person has to do about it differs, so say which this was.
+                if _is_busy(error):
+                    busy = True
         if item["registration"]:
             _remove_registration(home, item["registration"])
         if not item["commands"] and not item["paths"] and item["kind"] != "registration":
@@ -318,7 +367,13 @@ def apply(
                 directory.rmdir()
         except OSError:
             pass
-    return {"removed": done, "failed": failed, "manual": manual, "memories_backup": str(backup) if backup else None}
+    return {
+        "removed": done,
+        "failed": failed,
+        "manual": manual,
+        "memories_backup": str(backup) if backup else None,
+        "still_in_use": busy,
+    }
 
 
 def _remove_registration(home: Path, registration: str) -> None:
