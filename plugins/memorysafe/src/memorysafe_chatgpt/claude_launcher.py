@@ -12,13 +12,14 @@ import urllib.request
 from pathlib import Path
 
 from .bootstrap_catalog import VERSION
+from . import dashboard_record
 # The window opener lives with the dashboard tool that normally calls it; a first start
 # wants the same window, not a second way of making one.
 from .server import _open_dashboard_window, main as run_mcp_server
 
 
 PRODUCT = "MemorySafe Beta"
-_RECORD_NAME = "dashboard.json"
+_RECORD_NAME = dashboard_record.NAME
 _OPENED_NAME = "dashboard-opened.json"
 # How long a first start waits for the dashboard it just spawned to answer before
 # giving up on showing it. Off the MCP server's path, in a thread of its own.
@@ -101,23 +102,18 @@ def _dashboard_spawn_options() -> dict:
 
 
 def _read_dashboard_record(state_dir: Path) -> dict | None:
-    try:
-        record = json.loads((state_dir / _RECORD_NAME).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if not isinstance(record, dict) or not isinstance(record.get("pid"), int):
-        return None
-    return record
+    return dashboard_record.read(state_dir)
 
 
 def _write_dashboard_record(state_dir: Path, pid: int) -> None:
-    target = state_dir / _RECORD_NAME
-    temporary = target.with_name(target.name + ".tmp")
-    temporary.write_text(
-        json.dumps({"pid": pid, "version": VERSION, "plugin_root": str(Path(__file__).resolve().parents[2])}),
-        encoding="utf-8",
-    )
-    os.replace(temporary, target)
+    """The PID we spawned, which on Windows is a venv shim rather than the server.
+
+    Written so a dashboard that dies during startup still leaves a trace. setup_app
+    overwrites it with its own PID once it is bound, and that is the one the stale
+    check compares against -- see dashboard_record.
+    """
+
+    dashboard_record.write(state_dir, pid)
 
 
 def _is_a_first_start(state_dir: Path) -> bool:

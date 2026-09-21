@@ -19,6 +19,7 @@ from typing import Any
 from urllib.parse import quote, urlencode, urlparse
 
 from . import agents as agents_module
+from . import dashboard_record
 from .bootstrap_catalog import VERSION
 from .dashboard import dashboard_html, panel_html
 from .doctor import create_support_bundle, find_support_bundle, run_doctor
@@ -714,6 +715,15 @@ def main() -> None:
     _snapshot_on_start(SetupHandler.paths)
     _warm_token_metrics()
     with ThreadingHTTPServer((HOST, port), SetupHandler) as server:
+        # Bound, so this process is the one /api/status will answer from. The launcher
+        # recorded the PID it spawned, which on Windows is a venv shim that re-execs the
+        # real interpreter; the stale-dashboard check compares the record against the
+        # PID the port reports, so only this one makes it pass. Never fatal: failing to
+        # record who is serving is not a reason to refuse to serve.
+        try:
+            dashboard_record.write(SetupHandler.paths.state_dir, os.getpid())
+        except OSError:
+            pass
         _auto_connect_on_start(SetupHandler.paths)
         resolved_port = server.server_address[1]
         print(f"READY http://{HOST}:{resolved_port}/", flush=True)

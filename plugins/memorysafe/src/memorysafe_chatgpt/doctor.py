@@ -255,10 +255,20 @@ def _dashboard_version_check() -> dict[str, Any] | None:
             "The dashboard on port 8765 belongs to this install.",
             version=running["version"],
         )
+    # A pre-0.4 dashboard reports no PID, so it can only be named, never stopped from
+    # here. Saying "stop process None" would be worse than saying nothing.
+    remedy = (
+        f"Restart the assistant that started it, or stop process {running['pid']} and start any "
+        f"assistant, and the current one takes the port."
+        if running["pid"] is not None
+        else "Restart the assistant that started it -- most likely an older Claude Desktop "
+        "extension -- and the current one takes the port."
+    )
     return _check(
         "dashboard_version",
         "warning",
-        f"The dashboard on port 8765 is version {running['version']}, from an older install.",
+        f"The dashboard on port 8765 is version {running['version']}, from an older install, so it is "
+        f"what you see at that address rather than {VERSION}. {remedy}",
         version=running["version"],
         expected=VERSION,
         stoppable=running["pid"] is not None,
