@@ -160,6 +160,15 @@ def _print_migration(found: dict, changed: list[str], applied: bool) -> None:
     if restart:
         # The assistant keeps the old registration's tools until it reads its config again.
         print(f"\nRestart {' and '.join(restart)} so the old registration is gone from new conversations.")
+    if found["codex"]["registered"]:
+        # Codex rewrites config.toml from its own state. An entry removed here while
+        # it is running comes back the next time it saves: on this machine the same
+        # block returned twice, hours after being deleted, which is why it looked
+        # like MemorySafe was rewriting it.
+        print(
+            "\nClose Codex first. It rewrites config.toml from its own state, so an entry"
+            "\nremoved while it is running comes back when it next saves."
+        )
 
 
 def _megabytes(size: int) -> str:

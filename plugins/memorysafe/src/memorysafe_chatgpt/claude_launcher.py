@@ -249,6 +249,19 @@ def _default_state_dir() -> Path:
     return base / "MemorySafe" / "runtime-state"
 
 
+def _open_the_window_in_the_background(host: str, port: int) -> None:
+    """Start the window thread. A seam of its own, so tests need not patch threading.
+
+    Patching threading.Thread reaches every thread in the process, including the one
+    subprocess.run uses to read a child's output, so doing that in one test module
+    broke six unrelated tests in another. Patching this function reaches only this.
+
+    Daemon, because waiting for a browser must never hold up the MCP server this
+    launcher is about to run.
+    """
+
+    threading.Thread(target=_open_dashboard_when_ready, args=(host, port), daemon=True).start()
+
 def _start_dashboard() -> None:
     host = "127.0.0.1"
     port = int(os.environ.get("MEMORYSAFE_SETUP_PORT", "8765"))
@@ -289,9 +302,7 @@ def _start_dashboard() -> None:
         _mark_dashboard_opened(state_dir)
         # In a thread, because waiting for the page would hold up the MCP server this
         # launcher is about to run, and the host is timing that.
-        threading.Thread(
-            target=_open_dashboard_when_ready, args=(host, port), daemon=True
-        ).start()
+        _open_the_window_in_the_background(host, port)
 
 
 def main() -> None:
