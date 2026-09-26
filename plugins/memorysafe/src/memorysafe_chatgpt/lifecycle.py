@@ -1,14 +1,17 @@
 """Evidence-based memory lifecycle for the Agent beta connector.
 
 This module is not the research continual-learning stack. It does not implement
-MVI, ProtectScore, hard-quota eviction, age decay, embeddings, or any network
-call. It only answers: should a new fact replace an existing active memory?
+MVI, ProtectScore, age decay, embeddings, or any network call. It only answers:
+should a new fact replace an existing active memory? (The optional capacity bound,
+MEMORYSAFE_MAX_ACTIVE, lives in storage.py and is off unless configured.)
 
 States used by the store:
 
 - active      in normal recall
 - superseded  removed from recall because a later memory replaced it
 - deleted     removed from recall because the user asked to forget it
+- evicted     removed from recall by the optional capacity bound (never protected ones)
+- rejected    a newer update the user reverted as wrong
 
 Forget is a soft deletion. Nothing here permanently erases a row.
 """
@@ -48,8 +51,23 @@ _REPLACEMENT_LANGUAGE = re.compile(
     # installed, replacing 0.3.4" sat open as an ambiguous review for six days.
     r"replac(?:es|ing)|replaced by|supersed(?:es|ing)|superseded by|"
     r"in place of|upgraded (?:to|from)|downgraded to|"
-    r"rolled back to|switched (?:to|from)|renamed to|now called)\b",
+    r"rolled back to|switched (?:to|from)|renamed to|now called|"
+    # "We switched the backend database from Postgres to MySQL" and "the standup
+    # moved to 10am" were only ever flagged for review: the verb and its
+    # preposition were not adjacent, and a bare "now" was not recognised at all.
+    r"switched\b[\w\s]{0,40}?\b(?:to|from)|moved\b[\w\s]{0,40}?\bto|"
+    r"changed\b[\w\s]{0,40}?\bto|rescheduled|postponed|pushed (?:back )?to|now)\b",
     re.IGNORECASE,
+)
+
+# Words that announce a change. They say *that* something changed, not *what* it is
+# about, so they are left out when two memories' subjects are compared.
+_CHANGE_WORDS = frozenset(
+    """
+    now moved move moves switched switch switches changed change changes updated update
+    replaced replacing replace replaces instead upgraded upgrade downgraded rescheduled
+    postponed pushed new no longer from to anymore was were became become has have
+    """.split()
 )
 
 # Version numbers are invisible to the text matcher: _normalize splits on
@@ -69,7 +87,13 @@ _VERSION = re.compile(
     re.IGNORECASE,
 )
 
-_LIVES_IN = re.compile(r"\bliv(?:e|es|ing)\s+in\s+(.+)$", re.IGNORECASE)
+_LIVES_IN = re.compile(r"^(?P<subject>.*?)\bliv(?:e|es|ing)\s+in\s+(?P<value>.+)$", re.IGNORECASE)
+# "Dana moved to Toronto" is a change of residence. "The standup moved to 10am" is
+# not, so a destination containing a digit is left to the value comparison below.
+_MOVED_TO = re.compile(
+    r"^(?P<subject>.*?)\b(?:has\s+)?(?:moved|relocated)\s+to\s+(?P<value>[^\d]+?)\.?$",
+    re.IGNORECASE,
+)
 _WORKS_AT = re.compile(r"\bworks?\s+(?:at|for)\s+(.+)$", re.IGNORECASE)
 _WORKS_AS = re.compile(r"\bworks?\s+as\s+(.+)$", re.IGNORECASE)
 _PREFERS = re.compile(r"\bprefers?\s+(.+)$", re.IGNORECASE)
@@ -125,6 +149,22 @@ _VALUE_TOKEN = re.compile(
 )
 
 
+def _person_subject(text: str) -> str:
+    """The name in front of 'lives in' / 'moved to', without filler words."""
+
+    words = [w for w in re.findall(r"[^\W\d_][\w'-]*", text) if w.casefold() not in {"has", "have", "and", "also", "recently", "just"}]
+    return " ".join(words[-3:])
+
+
+def _looks_like_a_person(subject: str) -> bool:
+    words = subject.split()
+    if not words:
+        return False
+    if words[-1].casefold() in {"i", "we", "he", "she", "they"}:
+        return True
+    return all(word[:1].isupper() for word in words) and words[0].casefold() not in {"the", "our", "my", "a", "an"}
+
+
 def _norm_slot(text: str) -> str:
     _, normalize, _ = _text()
     return normalize(text.strip().rstrip("."))
@@ -152,7 +192,12 @@ def extract_slots(content: str) -> tuple[tuple[str, str, str], ...]:
         slots.append((kind, _norm_slot(subject), value.strip()))
 
     if match := _LIVES_IN.search(clean):
-        add("lives_in", "", match.group(1))
+        add("lives_in", _person_subject(match.group("subject")), match.group("value"))
+    elif match := _MOVED_TO.search(clean):
+        subject = _person_subject(match.group("subject"))
+        # Only people move house. "The launch party moved to Toronto" names an event.
+        if subject and _looks_like_a_person(subject):
+            add("lives_in", subject, match.group("value"))
     if match := _WORKS_AT.search(clean):
         add("works_at", "", match.group(1))
     if match := _WORKS_AS.search(clean):
@@ -178,6 +223,208 @@ def extract_slots(content: str) -> tuple[tuple[str, str, str], ...]:
     return tuple(slots)
 
 
+_MONTHS = {
+    name: index
+    for index, names in enumerate(
+        (
+            ("jan", "january"), ("feb", "february"), ("mar", "march"), ("apr", "april"),
+            ("may",), ("jun", "june"), ("jul", "july"), ("aug", "august"),
+            ("sep", "sept", "september"), ("oct", "october"), ("nov", "november"),
+            ("dec", "december"),
+        ),
+        start=1,
+    )
+    for name in names
+}
+_MONTH = r"(?P<{0}>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?"
+_DATE_VALUE = re.compile(
+    r"\b(?P<d1>\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?" + _MONTH.format("m1") + r"(?:,?\s+(?P<y1>20\d{2}))?\b"
+    r"|\b" + _MONTH.format("m2") + r"\s+(?P<d2>\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(?P<y2>20\d{2}))?\b"
+    r"|\b(?P<y3>20\d{2})-(?P<m3>\d{2})-(?P<d3>\d{2})\b",
+    re.IGNORECASE,
+)
+_TIME_VALUE = re.compile(
+    r"\b(?P<h1>\d{1,2})(?::(?P<n1>\d{2}))?\s*(?P<ap>[ap])\.?m\b\.?"
+    r"|\b(?P<h2>[01]?\d|2[0-3]):(?P<n2>[0-5]\d)\b"
+    r"|\b(?P<noon>noon|midnight)\b",
+    re.IGNORECASE,
+)
+_AMOUNT_VALUE = re.compile(
+    r"(?P<cur>[$€£])\s?(?P<a1>\d[\d,]*(?:\.\d+)?)\s?(?P<k1>[km])?\b"
+    r"|\b(?P<a2>\d[\d,]*(?:\.\d+)?)\s?(?P<pct>%|percent\b)",
+    re.IGNORECASE,
+)
+_VERSION_VALUE = re.compile(r"\bv?(\d+\.\d+\.\d+(?:\.\d+)*)\b|\b(?:v|version|release)\s*(\d+\.\d+(?:\.\d+)*)\b", re.IGNORECASE)
+_NUMBER = re.compile(r"\b\d+(?:\.\d+)?\b")
+
+
+@lru_cache(maxsize=4096)
+def extract_values(content: str) -> tuple[dict[str, frozenset], frozenset[str], str]:
+    """Typed values (dates, times, amounts, versions), leftover identifiers, and the
+    text with every value cut out.
+
+    Comparing values as strings was the stale-state bug: "15 Oct 2026" and
+    "22 Oct 2026" score 0.8 as text, so the newer deadline was read as an
+    elaboration of the old one and both stayed in recall. Values are parsed and
+    compared as values instead. A bare number that is none of these -- "item 27",
+    "room 7" -- is an identifier: it names *which* thing, so two memories with
+    different identifiers are about different things, not a change of value.
+    """
+
+    values: dict[str, set] = {}
+    spans: list[tuple[int, int]] = []
+
+    def take(kind: str, value: Any, match: re.Match) -> None:
+        values.setdefault(kind, set()).add(value)
+        spans.append(match.span())
+
+    for match in _VERSION_VALUE.finditer(content):
+        take("version", match.group(1) or match.group(2), match)
+    for match in _DATE_VALUE.finditer(content):
+        g = match.groupdict()
+        if g["y3"]:
+            month, day, year = int(g["m3"]), int(g["d3"]), g["y3"]
+        else:
+            name = (g["m1"] or g["m2"]).casefold().rstrip(".")
+            month = _MONTHS.get(name) or _MONTHS.get(name[:3], 0)
+            day = int(g["d1"] or g["d2"])
+            year = g["y1"] or g["y2"]
+        take("date", (month, day, year), match)
+    for match in _TIME_VALUE.finditer(content):
+        g = match.groupdict()
+        if g["noon"]:
+            minutes = 720 if g["noon"].casefold() == "noon" else 0
+        elif g["h1"]:
+            hour = int(g["h1"]) % 12 + (12 if g["ap"].casefold() == "p" else 0)
+            minutes = hour * 60 + int(g["n1"] or 0)
+        else:
+            minutes = int(g["h2"]) * 60 + int(g["n2"])
+        take("time", minutes, match)
+    for match in _AMOUNT_VALUE.finditer(content):
+        g = match.groupdict()
+        raw = (g["a1"] or g["a2"]).replace(",", "")
+        amount = float(raw) * {"k": 1e3, "m": 1e6}.get((g["k1"] or "").casefold(), 1)
+        take("percent" if g["pct"] else "amount", amount, match)
+
+    def covered(start: int, end: int) -> bool:
+        return any(a <= start and end <= b for a, b in spans)
+
+    identifiers = frozenset(
+        m.group(0) for m in _NUMBER.finditer(content) if not covered(*m.span())
+    )
+    residue = content
+    for start, end in sorted(spans, reverse=True):
+        residue = residue[:start] + " " + residue[end:]
+    residue = _NUMBER.sub(" ", residue)
+    return {k: frozenset(v) for k, v in values.items()}, identifiers, residue
+
+
+def _dates_differ(new: frozenset, old: frozenset) -> bool:
+    for nm, nd, ny in new:
+        for om, od, oy in old:
+            if (nm, nd) == (om, od) and (ny is None or oy is None or ny == oy):
+                return False
+    return True
+
+
+@lru_cache(maxsize=4096)
+def _frame_terms(content: str) -> frozenset[str]:
+    """What a memory is about once its values and change words are removed."""
+
+    from . import storage as _storage
+
+    _, _, residue = extract_values(content)
+    return frozenset(
+        _storage._stem(token)
+        for token in _storage._normalize(residue).split()
+        if len(token) > 1
+        and token not in _storage._STOPWORDS
+        and token not in _CHANGE_WORDS
+        and token not in _GENERIC_SUBJECTS
+        and not any(ch.isdigit() for ch in token)
+    )
+
+
+_FROM_TO = re.compile(
+    r"\bfrom\s+(?P<old>[\w.+#-]+)\s+to\s+(?P<new>[\w.+#-]+)"
+    r"|\breplac(?:ed|ing)\s+(?P<old2>[\w.+#-]+)\s+with\s+(?P<new2>[\w.+#-]+)"
+    r"|\b(?P<new3>[\w.+#-]+)\s+instead\s+of\s+(?P<old3>[\w.+#-]+)",
+    re.IGNORECASE,
+)
+
+
+def _value_change(new_content: str, old_content: str, change_language: bool) -> dict[str, Any] | None:
+    """Same subject, different date/time/amount/version, or an explicit X -> Y."""
+
+    content_terms, _, _ = _text()
+    new_values, new_ids, _ = extract_values(new_content)
+    old_values, old_ids, _ = extract_values(old_content)
+    if new_ids != old_ids and (new_ids or old_ids):
+        return {"action": "unrelated", "reason": "Different identifiers name different things.",
+                "evidence": f"identifiers {sorted(old_ids)} vs {sorted(new_ids)}", "confidence": 0.0}
+
+    new_frame = _frame_terms(new_content)
+    old_frame = _frame_terms(old_content)
+
+    # "switched from Postgres to MySQL": the old memory holds the old value, the
+    # new memory names both, and they share the rest of the subject.
+    if change_language and (match := _FROM_TO.search(new_content)):
+        before = (match.group("old") or match.group("old2") or match.group("old3")).rstrip(".,;:")
+        after = (match.group("new") or match.group("new2") or match.group("new3")).rstrip(".,;:")
+        before_terms = content_terms(before)
+        after_terms = content_terms(after)
+        old_terms = content_terms(old_content)
+        if before_terms and before_terms <= old_terms and not (after_terms & old_terms):
+            shared = (new_frame - after_terms) & (old_frame - before_terms)
+            if shared or len(old_frame) <= 2:
+                return {"action": "contradict",
+                        "reason": "A later fact says the value changed from the one this memory holds.",
+                        "evidence": f"changed: '{before}' -> '{after}'",
+                        "confidence": 0.92}
+
+    if not new_frame or not old_frame:
+        return None
+    shared = new_frame & old_frame
+    if not shared:
+        return None
+    jaccard = len(shared) / len(new_frame | old_frame)
+    smaller = min(len(new_frame), len(old_frame))
+    same_subject = jaccard >= 0.75 or (change_language and len(shared) / smaller >= 0.6)
+    if not same_subject:
+        return None
+    changed: list[str] = []
+    for kind in ("date", "time", "amount", "percent", "version"):
+        if kind not in new_values or kind not in old_values:
+            continue
+        if kind == "date":
+            differs = _dates_differ(new_values[kind], old_values[kind])
+        else:
+            differs = not (new_values[kind] & old_values[kind])
+        if differs:
+            changed.append(f"{kind}: {_show(old_values[kind])} vs {_show(new_values[kind])}")
+    if not changed:
+        return None
+    return {"action": "contradict",
+            "reason": ("A later fact gives a different value for the same subject"
+                       + (" and says it changed." if change_language else ".")),
+            "evidence": "; ".join(changed) + f"; subject {sorted(shared)[:6]}",
+            "confidence": 0.9 if change_language else 0.8}
+
+
+def _show(values: frozenset) -> str:
+    def one(value: Any) -> str:
+        if isinstance(value, tuple):
+            month, day, year = value
+            return f"{year or '????'}-{month:02d}-{day:02d}"
+        if isinstance(value, int):
+            return f"{value // 60:02d}:{value % 60:02d}"
+        if isinstance(value, float):
+            return f"{value:g}"
+        return str(value)
+
+    return ", ".join(sorted(one(v) for v in values))
+
+
 @lru_cache(maxsize=4096)
 def _distinctive_terms(content: str) -> frozenset[str]:
     content_terms, _, _ = _text()
@@ -194,7 +441,9 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
     _, normalize, similarity_fn = _text()
     new_norm = normalize(new_content)
     old_norm = normalize(old_content)
-    similarity = similarity_fn(new_norm, old_norm)
+    # The bounded call skips SequenceMatcher when the pair cannot be a duplicate;
+    # the exact score is only computed if a later branch reports it.
+    similarity = similarity_fn(new_norm, old_norm, minimum=MERGE_SIMILARITY)
     if similarity >= MERGE_SIMILARITY:
         return {
             "action": "duplicate",
@@ -203,10 +452,21 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
             "confidence": round(similarity, 3),
         }
 
+    cached: list[float] = []
+
+    def exact_similarity() -> float:
+        if not cached:
+            cached.append(similarity_fn(new_norm, old_norm))
+        return cached[0]
+
+    replacement = bool(_REPLACEMENT_LANGUAGE.search(new_content))
+    changed_value = _value_change(new_content, old_content, replacement)
+    if changed_value is not None:
+        return changed_value
+
     new_slots = extract_slots(new_content)
     old_slots = extract_slots(old_content)
     new_kinds = {slot[0] for slot in new_slots}
-    replacement = bool(_REPLACEMENT_LANGUAGE.search(new_content))
     new_terms = _distinctive_terms(new_content)
     old_terms = _distinctive_terms(old_content)
     overlap = new_terms & old_terms
@@ -239,6 +499,10 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
                     continue
             elif kind == "titled":
                 if similarity_fn(subject, old_subject) < 0.55:
+                    continue
+            elif kind == "lives_in":
+                # "Dana lives in Montreal" says nothing about where Sam lives.
+                if subject and old_subject and similarity_fn(subject, old_subject) < 0.55:
                     continue
             conflicting.append(
                 f"{kind}: '{old_value}' vs '{value}'"
@@ -276,7 +540,7 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
         return {
             "action": "review",
             "reason": "Replacement language is present but the conflicting value is not explicit.",
-            "evidence": f"shared terms {sorted(overlap)[:8]}; similarity {similarity:.2f}",
+            "evidence": f"shared terms {sorted(overlap)[:8]}; similarity {exact_similarity():.2f}",
             "confidence": 0.45,
         }
 
@@ -293,28 +557,24 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
                     "action": "unrelated",
                     "reason": "Same kind of fact, but the named subjects are different.",
                     "evidence": f"subjects {sorted(new_subjects)} vs {sorted(old_subjects)}",
-                    "confidence": round(similarity, 3),
+                    "confidence": round(exact_similarity(), 3),
                 }
             return {
                 "action": "review",
                 "reason": "Same kind of fact, different value, but the subject is not clearly the same.",
-                "evidence": f"kinds {sorted(new_kinds)}; similarity {similarity:.2f}",
+                "evidence": f"kinds {sorted(new_kinds)}; similarity {exact_similarity():.2f}",
                 "confidence": 0.4,
             }
 
-    if len(overlap) >= 2 and 0.28 <= similarity < MERGE_SIMILARITY:
-        return {
-            "action": "review",
-            "reason": "These memories share a subject but do not clearly contradict.",
-            "evidence": f"shared terms {sorted(overlap)[:8]}; similarity {similarity:.2f}",
-            "confidence": 0.4,
-        }
-
+    # "These memories share a subject" used to open a review here with no evidence
+    # of disagreement at all. 500 similar routine notes opened 496 of them and buried
+    # the few real conflicts. Similar is not contradictory: without a differing value
+    # or change language there is nothing for a person to decide.
     return {
         "action": "unrelated",
-        "reason": "No shared slot or distinctive subject.",
-        "evidence": f"similarity {similarity:.2f}",
-        "confidence": round(similarity, 3),
+        "reason": "No shared slot, differing value, or change language.",
+        "evidence": f"shared terms {sorted(overlap)[:8]}",
+        "confidence": 0.0,
     }
 
 
@@ -323,8 +583,24 @@ def consider_incoming(new_content: str, existing: list[Any]) -> dict[str, Any] |
 
     contradict: dict[str, Any] | None = None
     review: dict[str, Any] | None = None
+    new_terms = _distinctive_terms(new_content)
+    new_kinds = {slot[0] for slot in extract_slots(new_content)}
+    new_ids = extract_values(new_content)[1]
     for row in existing:
-        verdict = classify_pair(new_content, str(row["content"]))
+        old_content = str(row["content"])
+        # Different identifiers ("room 7" vs "room 27") are different things;
+        # classify_pair would say "unrelated" after a full similarity pass.
+        if extract_values(old_content)[1] != new_ids:
+            continue
+        # Cheap exact pre-filter. Every verdict other than an (ignored) duplicate
+        # needs a shared distinctive term or a shared slot kind, so a pair with
+        # neither is unrelated -- and skipping it avoids a quadratic
+        # SequenceMatcher per stored memory on every write.
+        if not (new_terms & _distinctive_terms(old_content)) and not (
+            new_kinds & {slot[0] for slot in extract_slots(old_content)}
+        ):
+            continue
+        verdict = classify_pair(new_content, old_content)
         verdict["old"] = row
         if verdict["action"] == "contradict":
             if contradict is None or verdict["confidence"] > contradict["confidence"]:

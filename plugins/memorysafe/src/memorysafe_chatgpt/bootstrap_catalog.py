@@ -10,7 +10,7 @@ starts behind it.
 from __future__ import annotations
 
 
-VERSION = "0.4.10"
+VERSION = "0.4.11"
 PROTOCOL_VERSION = "2024-11-05"
 
 SERVER_INSTRUCTIONS = (
@@ -143,7 +143,8 @@ TOOLS = [
         "title": "Forget a memory",
         "description": (
             "Remove one memory from active recall, only when the user asks. This is not a "
-            "permanent erase. Without an exact ID, find and confirm it first."
+            "permanent erase. Without an exact ID, find and confirm it first. Protected "
+            "memories need confirm=true."
         ),
         "inputSchema": _object(
             {
@@ -152,11 +153,41 @@ TOOLS = [
                     "minLength": 1,
                     "maxLength": 80,
                     "description": "Exact memory ID.",
-                }
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Required for a protected memory, after the user agrees.",
+                },
             },
             ["memory_id"],
         ),
         "annotations": _annotations(read_only=False, destructive=True, idempotent=True),
+    },
+    {
+        "name": "memorysafe_protect",
+        "title": "Protect or unprotect a memory",
+        "description": (
+            "Protect one memory (never evicted; forgetting needs confirmation), or pass "
+            "protect=false to remove protection. Only when the user asks. Audited."
+        ),
+        "inputSchema": _object(
+            {
+                "memory_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80,
+                    "description": "Exact memory ID.",
+                },
+                "protect": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "true protects, false unprotects.",
+                },
+            },
+            ["memory_id"],
+        ),
+        "annotations": _annotations(read_only=False, destructive=False, idempotent=True),
     },
     {
         "name": "memorysafe_explain",
@@ -200,7 +231,8 @@ TOOLS = [
         "name": "memorysafe_resolve_conflict",
         "title": "Resolve a memory conflict",
         "description": (
-            "Supersede, keep both, or restore. Requires confirm=true after the user agrees. "
+            "Supersede, keep both, restore (conflict stays open), or revert (reject the newer "
+            "update, bring back the prior fact). Requires confirm=true after the user agrees. "
             "Nothing changes without that confirmation."
         ),
         "inputSchema": _object(
@@ -212,8 +244,8 @@ TOOLS = [
                 },
                 "action": {
                     "type": "string",
-                    "enum": ["supersede", "keep_both", "restore"],
-                    "description": "supersede, keep_both, or restore.",
+                    "enum": ["supersede", "keep_both", "restore", "revert"],
+                    "description": "supersede, keep_both, restore, or revert.",
                 },
                 "confirm": {
                     "type": "boolean",

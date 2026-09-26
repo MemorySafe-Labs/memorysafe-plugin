@@ -1,4 +1,4 @@
-# MemorySafe 0.4.10
+# MemorySafe 0.4.11
 
 Private, governed memory for Claude Code, Claude Desktop and Codex, kept in one SQLite
 file on your own computer. macOS, Linux and Windows.
@@ -47,7 +47,7 @@ last lines say how to add it to your PATH. Then:
     claude plugin marketplace add MemorySafe-Labs/memorysafe-plugin
     claude plugin install memorysafe@memorysafe
 
-Restart Claude Code, run `/mcp`, and confirm `memorysafe` is connected with eleven tools.
+Restart Claude Code, run `/mcp`, and confirm `memorysafe` is connected with twelve tools.
 
 ## Claude Desktop
 
@@ -99,14 +99,36 @@ keeping** — and to show you its reasoning. Every candidate gets one of four ou
 
 | | |
 |---|---|
-| **Protect** | high value, kept with the reason on record; it leaves recall only when a later fact replaces it (recorded, and reversible) or you ask to forget it |
+| **Protect** | high value, kept with the reason on record; it leaves recall only when a later fact replaces it (recorded, and reversible) or you confirm you want it forgotten |
 | **Store** | worth keeping |
 | **Merge** | you already knew this; fold it in rather than duplicate |
 | **Skip** | not stored: automatic capture refused it, or automatic mode is off |
 
+What gets protected without being asked: safety and decision memories always; preferences
+and personal context; project notes only when they carry a date, amount, deadline, decision
+or constraint. Routine entries -- the third and later memory worded the same apart from its
+numbers, like a log line -- are stored but never protected automatically. You can protect or
+unprotect any memory yourself (`memorysafe protect <id>`, `memorysafe unprotect <id>`, or ask
+your assistant); forgetting a protected memory needs confirmation.
+
+When a later fact changes a date, time, amount or version on the same subject, or says so
+outright ("moved to", "switched from X to Y", "now"), it replaces the older one, recorded and
+reversible. A lower-confidence write, such as an agent's guess, never silently replaces a fact
+you stated: both stay, flagged. Search marks every memory that sits in an open conflict and
+shows its confidence. To undo a wrong update in one step:
+`memorysafe resolve-conflict <id> revert --confirm`. `memorysafe review-conflicts`,
+`forget` and `restore` are available as commands too.
+
+Optional capacity limit: set `MEMORYSAFE_MAX_ACTIVE` to cap how many memories stay in active
+recall. It is off unless you set it. Over the limit, MemorySafe moves the least valuable
+unprotected memories out of recall -- routine, never-recalled, low-importance and oldest first --
+records each one in its history, and `restore` brings any of them back. Protected memories are
+never moved out.
+
 A memory health score reports how well the store is doing: importance and confidence at
-60%, protection of high-value memories at 30%, duplicate cleanliness at 10%. The formula
-is printed with the score, so you can check the arithmetic rather than trust it.
+60%, protection of high-value memories at 30%, duplicate cleanliness at 10%, minus 5 points
+for each open conflict (up to 30). The formula is printed with the score, so you can check the
+arithmetic rather than trust it.
 
 ## What stays local
 

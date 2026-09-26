@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .token_metrics import count_text_tokens, tokenizer_metadata
-from .lifecycle import consider_incoming, record_relation
+from .lifecycle import consider_incoming, extract_values, record_relation
 
 
 # The numbers here used to be hand-entered constants with no derivation anywhere in
@@ -192,6 +192,51 @@ def _content_terms(text: str) -> set[str]:
 
 MERGE_THRESHOLD = 0.88
 
+_NUMBERISH = re.compile(r"\d")
+
+
+@lru_cache(maxsize=8192)
+def _number_tokens(normalized: str) -> frozenset[str]:
+    """Tokens carrying a digit: room numbers, item numbers, versions, dates."""
+
+    return frozenset(token for token in normalized.split() if _NUMBERISH.search(token))
+
+
+@lru_cache(maxsize=8192)
+def _template(normalized: str) -> str:
+    """The sentence with every number blanked: 'routine item # checked room #'.
+
+    Memories that share a template and differ only in their numbers are routine
+    entries of one kind -- a log line, a checklist tick. That is the signal used to
+    keep them from being auto-protected and to evict them first under a capacity
+    bound, where a one-off fact that shares its shape with nothing is kept.
+    """
+
+    return " ".join("#" if _NUMBERISH.search(token) else token for token in normalized.split())
+
+
+# Evidence that a project note is something later work depends on, rather than a
+# routine log line. Only project notes with one of these are auto-protected.
+_DURABLE_ANCHOR = re.compile(
+    r"\b(?:decided|decision|agreed|must|never|always|deadline|due|budget|contract|"
+    r"requirement|constraint|blocked|depends on|owner|launch(?:es)?|milestone)\b",
+    re.IGNORECASE,
+)
+ROUTINE_MIN_SIBLINGS = 2
+
+
+def _max_active() -> int | None:
+    """MEMORYSAFE_MAX_ACTIVE: optional cap on active memories. Unset or 0 means none."""
+
+    import os
+
+    raw = os.environ.get("MEMORYSAFE_MAX_ACTIVE", "").strip()
+    try:
+        value = int(raw) if raw else 0
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
 
 def _similarity(left: str, right: str, minimum: float = 0.0) -> float:
     """Blended token/sequence similarity, in [0, 1].
@@ -348,6 +393,10 @@ class MemoryStore:
                 -- hundred memories, 21 ms at two thousand.
                 CREATE INDEX IF NOT EXISTS memories_recent_by_category
                     ON memories(state, category, updated_at DESC);
+                -- The lifecycle check reads the most recent active memories of every
+                -- category on each new write; without this it sorted them every time.
+                CREATE INDEX IF NOT EXISTS memories_recent_active
+                    ON memories(state, updated_at DESC);
 
 
                 CREATE TABLE IF NOT EXISTS decision_events (
@@ -444,22 +493,25 @@ class MemoryStore:
         protecting = next(
             (event for event in reversed(history) if event["decision"] == "PROTECT"), None
         )
+        is_protected = bool(memory["protected"])
         return {
             "memory_id": memory_id,
             "found": True,
             "content": str(memory["content"]),
-            "protected": bool(memory["protected"]),
-            "protected_because": protecting["reason"] if protecting else None,
-            "protected_since": protecting["at"] if protecting else None,
+            "protected": is_protected,
+            "protected_because": protecting["reason"] if protecting and is_protected else None,
+            "protected_since": protecting["at"] if protecting and is_protected else None,
+            "confidence": float(memory["confidence"]),
             "recall_count": int(memory["recall_count"] or 0),
             "state": str(memory["state"]),
             "history": history,
             "relations": self._relations_for(memory_id),
             "note": (
                 "Age never revokes protection. A protected memory leaves active recall "
-                "only when later evidence supersedes it, or when someone asks for it to "
-                "be forgotten. Forget removes it from recall; it does not permanently "
-                "erase the row or its history."
+                "only when later evidence supersedes it, or when someone confirms it "
+                "should be forgotten; it is never evicted by a capacity limit. Forget "
+                "and eviction remove a memory from recall; neither permanently erases "
+                "the row or its history."
             ),
         }
 
@@ -671,7 +723,10 @@ class MemoryStore:
         "safety": 0.95,
         "decision": 0.95,
         "preference": 0.85,
-        "project": 0.85,
+        # 0.85 only with a durable anchor (a date, a decision, a deadline...), see
+        # remember(). 149 of 500 routine project log lines were auto-protected when
+        # every project note scored 0.85.
+        "project": 0.75,
         "personal": 0.80,
         "task": 0.70,
         "other": 0.60,
@@ -710,11 +765,15 @@ class MemoryStore:
 
         content_bytes = len(clean_content.encode("utf-8"))
         timestamp = _now()
+        derived = importance is None
         if importance is None or confidence is None:
             derived_importance, derived_confidence = self.score_memory(category, source)
             importance = derived_importance if importance is None else importance
             confidence = derived_confidence if confidence is None else confidence
-        must_protect = category in {"decision", "safety"} or importance >= 0.8
+        anchored = bool(_DURABLE_ANCHOR.search(clean_content) or _DATE_HINT.search(clean_content)
+                        or _AMOUNT_HINT.search(clean_content))
+        if derived and category == "project" and anchored:
+            importance = 0.85
 
         with self._session() as connection:
             exact = connection.execute(
@@ -726,6 +785,7 @@ class MemoryStore:
                 (normalized,),
             ).fetchone()
             if exact:
+                must_protect = self._protection_rule(category, importance, anchored, routine=False)
                 protected = bool(exact["protected"] or must_protect)
                 new_importance = max(float(exact["importance"]), importance)
                 new_confidence = max(float(exact["confidence"]), confidence)
@@ -756,9 +816,12 @@ class MemoryStore:
                     "reason": "This matched an existing memory, so MemorySafe kept one copy.",
                 }
 
+            # Only the normalised text is needed to pick a merge target; the chosen
+            # row is read in full below. Fetching every column of 250 rows per write
+            # was most of the write path's time once duplicates stopped being merged.
             candidates = connection.execute(
                 """
-                SELECT * FROM memories
+                SELECT normalized_content, id FROM memories
                 WHERE state = 'active' AND category = ?
                 ORDER BY updated_at DESC LIMIT 250
                 """,
@@ -768,15 +831,40 @@ class MemoryStore:
             # merge threshold is worth nothing and is skipped inside _similarity.
             closest = None
             closest_score = 0.0
+            numbers = _number_tokens(normalized)
+            template = _template(normalized)
+            siblings = 0
             for row in candidates:
-                score = _similarity(normalized, row["normalized_content"], minimum=MERGE_THRESHOLD)
+                row_normalized = row[0]
+                if numbers and _template(row_normalized) == template:
+                    siblings += 1
+                # Different numbers are different facts: "item 27, room 27" was merged
+                # into "item 7, room 7" at similarity 0.92 and its text was lost.
+                if _number_tokens(row_normalized) != numbers:
+                    continue
+                score = _similarity(normalized, row_normalized, minimum=MERGE_THRESHOLD)
                 if score > closest_score:
                     closest, closest_score = row, score
+            if closest is not None and closest_score >= MERGE_THRESHOLD:
+                closest = connection.execute(
+                    "SELECT * FROM memories WHERE id = ?", (closest[1],)
+                ).fetchone()
+            routine = siblings >= ROUTINE_MIN_SIBLINGS and category not in {"decision", "safety"}
+            if routine and derived:
+                importance = min(importance, 0.5)
+            must_protect = self._protection_rule(category, importance, anchored, routine)
             if closest is not None and closest_score >= MERGE_THRESHOLD:
                 protected = bool(closest["protected"] or must_protect)
                 new_importance = max(float(closest["importance"]), importance)
                 new_confidence = max(float(closest["confidence"]), confidence)
                 replacement = clean_content if len(clean_content) >= len(closest["content"]) else closest["content"]
+                # Never lose text on a merge: whichever wording is not kept as the
+                # content is written into the history, where explain can show it.
+                kept_note = ""
+                if replacement != closest["content"]:
+                    kept_note = f" Previous text: {closest['content']}"
+                elif clean_content != closest["content"]:
+                    kept_note = f" Incoming text: {clean_content}"
                 connection.execute(
                     """
                     UPDATE memories
@@ -798,7 +886,7 @@ class MemoryStore:
                     connection,
                     "MERGE",
                     closest["id"],
-                    f"Near duplicate merged (similarity {closest_score:.2f}).",
+                    f"Near duplicate merged (similarity {closest_score:.2f}).{kept_note}",
                     content_bytes,
                     source,
                 )
@@ -816,11 +904,20 @@ class MemoryStore:
             memory_id = f"MS-{datetime.now(timezone.utc):%Y%m%d}-{uuid.uuid4().hex[:8].upper()}"
             decision = "PROTECT" if must_protect else "STORE"
             protection_reason = _why_protected(category, importance, source)
-            reason = (
-                protection_reason
-                if must_protect
-                else "Useful distinct memory stored."
-            )
+            if must_protect:
+                reason = protection_reason
+            elif routine:
+                reason = (
+                    f"Routine entry: {siblings} recent memories share this wording apart "
+                    "from their numbers, so it is stored but not protected."
+                )
+            elif category == "project":
+                reason = (
+                    "Project note stored. Not protected automatically: it names no date, "
+                    "decision, deadline or amount. Protect it explicitly if it matters."
+                )
+            else:
+                reason = "Useful distinct memory stored."
             connection.execute(
                 """
                 INSERT INTO memories(
@@ -849,22 +946,29 @@ class MemoryStore:
                 content_bytes,
                 source,
             )
+            # A memory can only be compared with one naming the same identifiers
+            # ("room 27" is never about "room 7"; see lifecycle.consider_incoming), so
+            # when this one has identifiers, let SQLite drop rows that lack them.
+            identifiers = sorted(extract_values(clean_content)[1])
             others = connection.execute(
                 """
-                SELECT * FROM memories
-                WHERE state = 'active' AND id != ?
+                SELECT id, content, confidence FROM memories
+                WHERE state = 'active' AND id != ? {}
                 ORDER BY updated_at DESC LIMIT 2000
-                """,
-                (memory_id,),
+                """.format("".join(" AND instr(content, ?) > 0" for _ in identifiers)),
+                (memory_id, *identifiers),
             ).fetchall()
             lifecycle = self._apply_incoming_lifecycle(
                 connection,
                 new_id=memory_id,
                 new_content=clean_content,
+                new_confidence=float(confidence),
                 others=others,
                 source=source,
                 timestamp=timestamp,
             )
+            cap = _max_active()
+            evicted = self._enforce_capacity(connection, cap, keep_id=memory_id) if cap else []
 
         result = {
             "decision": decision,
@@ -877,6 +981,7 @@ class MemoryStore:
             "reason": reason,
         }
         result.update(lifecycle)
+        result["evicted_memory_ids"] = evicted
         if lifecycle.get("replaced_memory_id"):
             result["reason"] = (
                 f"{reason} Replaced {lifecycle['replaced_memory_id']}: "
@@ -887,11 +992,108 @@ class MemoryStore:
                 f"{reason} Possible conflict with an existing memory; marked for review "
                 f"(conflict {lifecycle['conflict_id']})."
             )
+        if evicted:
+            result["reason"] += (
+                f" Capacity limit reached: {len(evicted)} low-value unprotected "
+                "memor{} evicted (restorable).".format("y was" if len(evicted) == 1 else "ies were")
+            )
         return result
+
+    @staticmethod
+    def _protection_rule(category: str, importance: float, anchored: bool, routine: bool) -> bool:
+        """Which memories are protected without being asked.
+
+        - safety and decision: always.
+        - routine entries (the third or later memory whose wording differs from recent
+          ones only in its numbers): never automatically.
+        - project: only with a durable anchor -- a date, amount, deadline, decision or
+          constraint -- and importance >= 0.8.
+        - everything else: importance >= 0.8.
+        Anything can still be protected explicitly with protect().
+        """
+
+        if category in {"decision", "safety"}:
+            return True
+        if routine:
+            return False
+        if category == "project":
+            return anchored and importance >= 0.8
+        return importance >= 0.8
+
+    def _enforce_capacity(
+        self, connection: sqlite3.Connection, cap: int, keep_id: str | None = None
+    ) -> list[str]:
+        """Evict down to `cap` active memories, least valuable first. Protected
+        memories are never evicted, and neither is the memory just written.
+
+        Order: never-recalled before recalled, routine (shares its wording apart from
+        numbers with 2+ other active memories) before one-off, then lower importance,
+        then older. A rare fact therefore outlives hundreds of routine log lines even
+        when its category scores lower. Eviction is a state change, recorded as an
+        EVICT event, and restore() brings a memory back.
+        """
+
+        active = int(
+            connection.execute("SELECT COUNT(*) FROM memories WHERE state = 'active'").fetchone()[0]
+        )
+        overflow = active - cap
+        if overflow <= 0:
+            return []
+        rows = connection.execute(
+            """
+            SELECT id, normalized_content, importance, protected, updated_at,
+                   COALESCE(recall_count, 0) AS recall_count
+            FROM memories WHERE state = 'active'
+            """
+        ).fetchall()
+        templates = Counter(_template(row["normalized_content"]) for row in rows)
+        candidates = [row for row in rows if not row["protected"] and row["id"] != keep_id]
+
+        def value(row: sqlite3.Row) -> tuple:
+            siblings = templates[_template(row["normalized_content"])] - 1
+            routine = siblings >= ROUTINE_MIN_SIBLINGS
+            return (
+                row["recall_count"] > 0,
+                not routine,
+                # Within a routine series the entries are interchangeable, including
+                # the first two (scored before the series was recognisable): oldest go.
+                0.0 if routine else float(row["importance"]),
+                str(row["updated_at"]),
+            )
+
+        candidates.sort(key=value)
+        timestamp = _now()
+        evicted: list[str] = []
+        for row in candidates[:overflow]:
+            siblings = templates[_template(row["normalized_content"])] - 1
+            connection.execute(
+                "UPDATE memories SET state = 'evicted', updated_at = ? WHERE id = ?",
+                (timestamp, row["id"]),
+            )
+            self._record_event(
+                connection,
+                "EVICT",
+                row["id"],
+                (
+                    f"Capacity limit of {cap} active memories reached (MEMORYSAFE_MAX_ACTIVE). "
+                    f"Evicted as the least valuable unprotected memory: "
+                    f"{'routine, ' + str(siblings) + ' similar entries' if siblings >= ROUTINE_MIN_SIBLINGS else 'one-off'}, "
+                    f"recalled {row['recall_count']} time(s), importance {float(row['importance']):.2f}. "
+                    "Restore brings it back."
+                ),
+                source="capacity",
+            )
+            evicted.append(str(row["id"]))
+        return evicted
 
     def find(self, query: str, limit: int, record: bool = True) -> list[dict[str, Any]]:
         query_normalized = _normalize(query)
         query_terms = _content_terms(query)
+        # Single digits never survived _content_terms (len > 1), so "room 7" searched
+        # for "room" alone and returned rooms 4, 5 and 6. Numbers only boost; they do
+        # not widen the candidate set.
+        query_numbers = _number_tokens(query_normalized)
+        query_padded = f" {query_normalized} "
         shape = _question_shape(query)
         if query_normalized and not query_terms:
             # Nothing but stopwords: no basis to return anything.
@@ -920,6 +1122,11 @@ class MemoryStore:
                     LIMIT 1000
                     """
                 ).fetchall()
+            # Read on the same connection: open conflicts are few (indexed by status),
+            # and a second connection per search cost more than the query.
+            open_relations = connection.execute(
+                "SELECT id, old_memory_id, new_memory_id FROM memory_relations WHERE status = 'open'"
+            ).fetchall()
 
         scored: list[tuple[float, sqlite3.Row]] = []
         for row in rows:
@@ -955,11 +1162,22 @@ class MemoryStore:
                     + (0.1 * float(row["importance"]))
                     + (0.08 * _shape_bonus(shape, str(row["content"])))
                 )
+                if query_numbers:
+                    row_numbers = _number_tokens(normalized_row)
+                    exact = len(query_numbers & row_numbers) / len(query_numbers)
+                    score += 0.25 * exact
+                    if row_numbers and not exact:
+                        score -= 0.05
+                    if exact and len(query_normalized.split()) > 1 and query_padded in f" {normalized_row} ":
+                        score += 0.1
             else:
                 score = float(row["importance"])
             scored.append((score, row))
 
         scored.sort(key=lambda item: (item[0], item[1]["updated_at"]), reverse=True)
+        flags = self._conflict_flags(scored, limit, open_relations)
+        if flags:
+            scored.sort(key=lambda item: (item[0], item[1]["updated_at"]), reverse=True)
         if record and scored[:limit]:
             # Recall is the benefit. Storing memories nobody ever reads back is cost with
             # no return, and until now nothing recorded whether a memory was ever used —
@@ -990,11 +1208,67 @@ class MemoryStore:
                 "protected": bool(row["protected"]),
                 "match_score": round(score, 3),
                 "updated_at": row["updated_at"],
+                "needs_review": row["id"] in flags,
+                "open_conflict_ids": flags.get(row["id"], {}).get("ids", []),
+                "review_note": flags.get(row["id"], {}).get("note"),
             }
             for score, row in scored[:limit]
         ]
 
-    def forget(self, memory_id: str) -> dict[str, Any]:
+    def _conflict_flags(
+        self,
+        scored: list[tuple[float, sqlite3.Row]],
+        limit: int,
+        open_relations: list[sqlite3.Row],
+    ) -> dict[str, dict[str, Any]]:
+        """Mark results that sit in an open conflict, and keep the older side of a
+        conflict from outranking the newer one unless the newer is less trusted.
+
+        A contradiction left open used to come back from find as two plain facts --
+        often the stale one first -- with nothing to say either was in question.
+        Mutates `scored` scores in place; returns memory_id -> {ids, note}.
+        """
+
+        if not open_relations or not scored:
+            return {}
+        window = {str(row["id"]) for _, row in scored[: max(limit * 3, limit + 10)]}
+        relations = [
+            rel for rel in open_relations
+            if str(rel["old_memory_id"]) in window or str(rel["new_memory_id"]) in window
+        ]
+        if not relations:
+            return {}
+        index = {str(row["id"]): position for position, (_, row) in enumerate(scored)}
+        flags: dict[str, dict[str, Any]] = {}
+
+        def flag(memory_id: str, conflict_id: int, note: str) -> None:
+            entry = flags.setdefault(memory_id, {"ids": [], "note": None})
+            entry["ids"].append(conflict_id)
+            entry["note"] = note if entry["note"] is None else f"{entry['note']} {note}"
+
+        for rel in relations:
+            old_id, new_id, cid = str(rel["old_memory_id"]), str(rel["new_memory_id"]), int(rel["id"])
+            old_pos, new_pos = index.get(old_id), index.get(new_id)
+            old_conf = float(scored[old_pos][1]["confidence"]) if old_pos is not None else None
+            new_conf = float(scored[new_pos][1]["confidence"]) if new_pos is not None else None
+            if old_pos is not None and new_pos is not None:
+                (old_score, old_row), (new_score, _) = scored[old_pos], scored[new_pos]
+                if new_conf >= old_conf and old_score >= new_score:
+                    scored[old_pos] = (new_score - 0.001, old_row)
+            if old_pos is not None:
+                if new_conf is not None and new_conf < old_conf:
+                    note = (f"Conflict {cid} open: a newer, lower-confidence ({new_conf:.2f}) "
+                            f"memory {new_id} disagrees with this one; not yet decided.")
+                else:
+                    note = (f"Conflict {cid} open: may be outdated -- newer memory {new_id} "
+                            "disagrees; not yet decided.")
+                flag(old_id, cid, note)
+            if new_pos is not None:
+                flag(new_id, cid, f"Conflict {cid} open: disagrees with older memory {old_id}; "
+                                  "not yet confirmed.")
+        return flags
+
+    def forget(self, memory_id: str, confirm: bool = False) -> dict[str, Any]:
         timestamp = _now()
         with self._session() as connection:
             row = connection.execute(
@@ -1013,6 +1287,16 @@ class MemoryStore:
                     "forgotten": True,
                     "reason": "That memory was already forgotten.",
                 }
+            if row["protected"] and not confirm:
+                return {
+                    "memory_id": memory_id,
+                    "forgotten": False,
+                    "needs_confirmation": True,
+                    "reason": (
+                        "Nothing was changed. This memory is protected; call again with "
+                        "confirm=true after the user agrees to forget it."
+                    ),
+                }
             connection.execute(
                 "UPDATE memories SET state = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ?",
                 (timestamp, timestamp, memory_id),
@@ -1021,7 +1305,8 @@ class MemoryStore:
                 connection,
                 "FORGET",
                 memory_id,
-                "User requested that this memory be forgotten.",
+                "User requested that this memory be forgotten."
+                + (" It was protected; the user confirmed." if row["protected"] else ""),
             )
             # A conflict is a question about two memories. Once one of them has left
             # recall the question cannot be answered and cannot be acted on, but it
@@ -1057,6 +1342,7 @@ class MemoryStore:
         others: list[sqlite3.Row],
         source: str,
         timestamp: str,
+        new_confidence: float = 1.0,
     ) -> dict[str, Any]:
         empty = {
             "lifecycle": "none",
@@ -1069,6 +1355,17 @@ class MemoryStore:
             return empty
         old = verdict["old"]
         old_id = str(old["id"])
+        old_confidence = float(old["confidence"])
+        if verdict["action"] == "contradict" and new_confidence + 1e-9 < old_confidence:
+            # A weaker source must not silently overwrite a stronger one: an agent's
+            # guess (0.85) replaced a fact the user stated outright (0.95). Keep both
+            # in recall, flagged, and let a person decide.
+            verdict = dict(verdict)
+            verdict["action"] = "review"
+            verdict["reason"] = (
+                f"{verdict['reason']} Not applied automatically: the new write has lower "
+                f"confidence ({new_confidence:.2f}) than the existing fact ({old_confidence:.2f})."
+            )
         if verdict["action"] == "contradict":
             connection.execute(
                 "UPDATE memories SET state = 'superseded', updated_at = ? WHERE id = ?",
@@ -1209,13 +1506,21 @@ class MemoryStore:
     def resolve_conflict(
         self, conflict_id: int, action: str, confirm: bool = False
     ) -> dict[str, Any]:
-        """action: supersede | keep_both | restore. Destructive actions need confirm=True."""
+        """action: supersede | keep_both | restore | revert. All need confirm=True.
+
+        - supersede: the newer memory wins; the older leaves recall.
+        - keep_both: both are true; both stay in recall and the conflict is closed.
+        - restore:   put the older memory back; the question stays OPEN and flagged
+                     until someone picks supersede, keep_both or revert.
+        - revert:    the newer update was wrong. Reject it and put the older fact
+                     back, in one step.
+        """
 
         action = action.strip().lower()
-        if action not in {"supersede", "keep_both", "restore"}:
+        if action not in {"supersede", "keep_both", "restore", "revert"}:
             return {
                 "resolved": False,
-                "reason": "Action must be supersede, keep_both, or restore.",
+                "reason": "Action must be supersede, keep_both, restore, or revert.",
             }
         if not confirm:
             return {
@@ -1224,7 +1529,9 @@ class MemoryStore:
                 "reason": (
                     "Nothing was changed. Call again with confirm=true after the user "
                     "agrees. supersede removes the older memory from recall; restore "
-                    "puts a superseded memory back; keep_both leaves both active."
+                    "puts a superseded memory back and keeps the conflict open; "
+                    "keep_both leaves both active; revert rejects the newer update and "
+                    "puts the older fact back."
                 ),
             }
         timestamp = _now()
@@ -1236,19 +1543,22 @@ class MemoryStore:
                 return {"resolved": False, "reason": "No conflict with that ID was found."}
             old_id = str(row["old_memory_id"])
             new_id = str(row["new_memory_id"])
+
+            def settle(decision: str, status: str) -> None:
+                connection.execute(
+                    """
+                    UPDATE memory_relations SET decision = ?, status = ?, resolved_at = ?
+                    WHERE id = ?
+                    """,
+                    (decision, status, None if status == "open" else timestamp, conflict_id),
+                )
+
             if action == "supersede":
                 connection.execute(
                     "UPDATE memories SET state = 'superseded', updated_at = ? WHERE id = ?",
                     (timestamp, old_id),
                 )
-                connection.execute(
-                    """
-                    UPDATE memory_relations
-                    SET decision = 'SUPERSEDE', status = 'resolved', resolved_at = ?
-                    WHERE id = ?
-                    """,
-                    (timestamp, conflict_id),
-                )
+                settle("SUPERSEDE", "resolved")
                 self._record_event(
                     connection,
                     "SUPERSEDE",
@@ -1260,6 +1570,7 @@ class MemoryStore:
                     "action": "supersede",
                     "old_memory_id": old_id,
                     "new_memory_id": new_id,
+                    "conflict_status": "resolved",
                     "reason": "The older memory was removed from active recall and kept for inspection.",
                 }
             if action == "keep_both":
@@ -1275,14 +1586,7 @@ class MemoryStore:
                     """,
                     (timestamp, old_id, new_id),
                 )
-                connection.execute(
-                    """
-                    UPDATE memory_relations
-                    SET decision = 'KEEP_BOTH', status = 'resolved', resolved_at = ?
-                    WHERE id = ?
-                    """,
-                    (timestamp, conflict_id),
-                )
+                settle("KEEP_BOTH", "resolved")
                 self._record_event(
                     connection,
                     "KEEP_BOTH",
@@ -1294,7 +1598,46 @@ class MemoryStore:
                     "action": "keep_both",
                     "old_memory_id": old_id,
                     "new_memory_id": new_id,
+                    "conflict_status": "resolved",
                     "reason": "Both memories remain in active recall.",
+                }
+            if action == "revert":
+                connection.execute(
+                    """
+                    UPDATE memories SET state = 'active', deleted_at = NULL, updated_at = ?
+                    WHERE id = ? AND state != 'active'
+                    """,
+                    (timestamp, old_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE memories SET state = 'rejected', updated_at = ?
+                    WHERE id = ? AND state = 'active'
+                    """,
+                    (timestamp, new_id),
+                )
+                settle("REVERT", "resolved")
+                self._record_event(
+                    connection,
+                    "REJECT",
+                    new_id,
+                    f"User rejected this update as wrong (conflict {conflict_id}). "
+                    f"The prior fact {old_id} is back in recall.",
+                )
+                self._record_event(
+                    connection,
+                    "RESTORE",
+                    old_id,
+                    f"Restored because the update {new_id} that replaced it was rejected "
+                    f"(conflict {conflict_id}).",
+                )
+                return {
+                    "resolved": True,
+                    "action": "revert",
+                    "old_memory_id": old_id,
+                    "new_memory_id": new_id,
+                    "conflict_status": "resolved",
+                    "reason": "The newer update was rejected and the prior fact is back in active recall.",
                 }
             # Same guard as keep_both: this restores a memory that was superseded by
             # the conflict, never one the user chose to forget.
@@ -1305,26 +1648,76 @@ class MemoryStore:
                 """,
                 (timestamp, old_id),
             )
-            connection.execute(
-                """
-                UPDATE memory_relations
-                SET decision = 'RESTORE', status = 'restored', resolved_at = ?
-                WHERE id = ?
-                """,
-                (timestamp, conflict_id),
-            )
+            new_state = connection.execute(
+                "SELECT state FROM memories WHERE id = ?", (new_id,)
+            ).fetchone()
+            both_active = new_state is not None and new_state["state"] == "active"
+            # Both facts active with no flag was the old outcome: a contradiction that
+            # looked settled. While both are in recall the question stays open.
+            settle("RESTORE", "open" if both_active else "restored")
             self._record_event(
                 connection,
                 "RESTORE",
                 old_id,
-                f"User restored this memory to active recall. It had been replaced by {new_id}.",
+                f"User restored this memory to active recall. It had been replaced by {new_id}."
+                + (" Both are active, so the conflict stays open." if both_active else ""),
             )
         return {
             "resolved": True,
             "action": "restore",
             "old_memory_id": old_id,
             "new_memory_id": new_id,
-            "reason": "The older memory is back in active recall.",
+            "conflict_status": "open" if both_active else "restored",
+            "reason": "The older memory is back in active recall."
+            + (
+                " The newer one is still active, so the conflict stays open and both are "
+                "flagged in recall until you choose supersede, keep_both or revert."
+                if both_active
+                else ""
+            ),
+        }
+
+    def protect(self, memory_id: str, protected: bool = True, reason: str = "") -> dict[str, Any]:
+        """Explicitly protect (or unprotect) one memory. Audited in its history."""
+
+        timestamp = _now()
+        with self._session() as connection:
+            row = connection.execute(
+                "SELECT id, protected, state FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if row is None:
+                return {
+                    "memory_id": memory_id,
+                    "changed": False,
+                    "protected": False,
+                    "reason": "No memory with that ID was found.",
+                }
+            if bool(row["protected"]) == protected:
+                return {
+                    "memory_id": memory_id,
+                    "changed": False,
+                    "protected": protected,
+                    "reason": f"That memory was already {'protected' if protected else 'unprotected'}.",
+                }
+            connection.execute(
+                "UPDATE memories SET protected = ?, updated_at = ? WHERE id = ?",
+                (int(protected), timestamp, memory_id),
+            )
+            why = reason.strip() or (
+                "You asked for this memory to be protected."
+                if protected
+                else "You asked for protection to be removed."
+            )
+            self._record_event(connection, "PROTECT" if protected else "UNPROTECT", memory_id, why)
+        return {
+            "memory_id": memory_id,
+            "changed": True,
+            "protected": protected,
+            "reason": (
+                "Protected: it is never evicted, and forgetting it needs confirmation."
+                if protected
+                else "Protection removed: it is treated like any other memory again."
+            ),
         }
 
     def restore(self, memory_id: str, confirm: bool = False) -> dict[str, Any]:
@@ -1356,25 +1749,79 @@ class MemoryStore:
                 "UPDATE memories SET state = 'active', deleted_at = NULL, updated_at = ? WHERE id = ?",
                 (timestamp, memory_id),
             )
+            reopened = self._reopen_conflicts(connection, memory_id, timestamp)
             connection.execute(
                 """
                 UPDATE memory_relations
                 SET decision = 'RESTORE', status = 'restored', resolved_at = ?
                 WHERE old_memory_id = ? AND status IN ('open', 'resolved')
-                """,
-                (timestamp, memory_id),
+                  AND id NOT IN ({})
+                """.format(",".join("?" * len(reopened)) or "NULL"),
+                (timestamp, memory_id, *reopened),
             )
             self._record_event(
                 connection,
                 "RESTORE",
                 memory_id,
-                "User restored this memory to active recall.",
+                f"User restored this memory to active recall (from {row['state']})."
+                + (f" Reopened conflict(s) {', '.join(map(str, reopened))}." if reopened else ""),
             )
         return {
             "restored": True,
             "memory_id": memory_id,
-            "reason": "The memory is back in active recall.",
+            "reopened_conflicts": reopened,
+            "reason": "The memory is back in active recall."
+            + (
+                f" {len(reopened)} conflict(s) with it are open again and flagged in recall."
+                if reopened
+                else ""
+            ),
         }
+
+    def _reopen_conflicts(
+        self, connection: sqlite3.Connection, memory_id: str, timestamp: str
+    ) -> list[int]:
+        """A memory coming back brings its unanswered questions back with it.
+
+        Forgetting one side closes a conflict, and restoring used to leave it closed:
+        forget + restore silently resolved a contradiction nobody had decided. Any
+        conflict with this memory whose other side is still active is reopened --
+        whether it was closed by the forget, or had superseded this memory.
+        """
+
+        rows = connection.execute(
+            """
+            SELECT r.id, r.old_memory_id, r.new_memory_id, r.status, r.decision
+            FROM memory_relations r
+            WHERE (r.old_memory_id = ? OR r.new_memory_id = ?)
+              AND (r.status = 'closed'
+                   OR (r.status IN ('resolved', 'restored') AND r.decision IN ('SUPERSEDE', 'REVERT', 'RESTORE')))
+            """,
+            (memory_id, memory_id),
+        ).fetchall()
+        reopened: list[int] = []
+        for rel in rows:
+            other = rel["new_memory_id"] if rel["old_memory_id"] == memory_id else rel["old_memory_id"]
+            state = connection.execute(
+                "SELECT state FROM memories WHERE id = ?", (other,)
+            ).fetchone()
+            if state is None or state["state"] != "active":
+                continue
+            if rel["status"] != "closed" and rel["old_memory_id"] != memory_id and rel["decision"] != "REVERT":
+                # This memory is the *newer* side of a finished replacement; bringing
+                # it back does not reopen the question unless it had been rejected.
+                continue
+            connection.execute(
+                """
+                UPDATE memory_relations
+                SET status = 'open', decision = 'REVIEW', resolved_at = NULL,
+                    reason = reason || ' Reopened: a side was restored while the other is still active.'
+                WHERE id = ?
+                """,
+                (rel["id"],),
+            )
+            reopened.append(int(rel["id"]))
+        return reopened
 
     def health(self) -> dict[str, Any]:
         with self._session() as connection:
@@ -1414,6 +1861,11 @@ class MemoryStore:
             superseded_count = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM memories WHERE state = 'superseded'"
+                ).fetchone()[0]
+            )
+            evicted_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM memories WHERE state = 'evicted'"
                 ).fetchone()[0]
             )
             open_reviews = int(
@@ -1457,9 +1909,12 @@ class MemoryStore:
         duplicates = sum(count - 1 for count in normalized_counts.values() if count > 1)
         duplicate_cleanliness = 1 - (duplicates / total) if total else 1.0
         quality = (average_importance + average_confidence) / 2 if total else 1.0
-        health_score = round(
+        # Open conflicts are unanswered questions about what is true; each one costs
+        # points so the score cannot read "healthy" while contradictions pile up.
+        conflict_penalty = min(30, 5 * open_reviews)
+        health_score = max(0, round(
             100 * ((0.6 * quality) + (0.3 * protection_coverage) + (0.1 * duplicate_cleanliness))
-        )
+        ) - conflict_penalty)
 
         decisions: Counter[str] = Counter()
         recall_events = 0
@@ -1654,7 +2109,10 @@ class MemoryStore:
                 }
                 for row in governance_rows
             ],
-            "formula": "60% average importance/confidence + 30% protection of high-value memories + 10% duplicate cleanliness.",
+            "formula": "60% average importance/confidence + 30% protection of high-value memories + 10% duplicate cleanliness, minus 5 points per open conflict (max 30).",
+            "conflict_penalty": conflict_penalty,
+            "evicted_memories": evicted_count,
+            "max_active": _max_active(),
             "formula_note": (
                 "The score rates the quality of what is stored. It deliberately says nothing "
                 "about whether anything is still arriving -- read capture_freshness for that."

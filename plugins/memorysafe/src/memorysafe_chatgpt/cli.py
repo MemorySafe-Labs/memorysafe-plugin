@@ -79,15 +79,24 @@ def _print_matches(query: str, matches: list[dict]) -> None:
         print(f'Nothing stored matches "{query}".')
         return
     print(f'{len(matches)} match(es) for "{query}":\n')
+    flagged = False
     for match in matches:
         print(f"  {match['content']}")
         print(
             f"    {match['memory_id']}  {match['category']}  "
+            f"confidence {match['confidence']:.2f}  "
             f"score {match['match_score']:.2f}  updated {match['updated_at'][:10]}"
             + ("  protected" if match["protected"] else "")
         )
+        # An open conflict has to be visible where the fact is read, or the fact is
+        # repeated with a certainty nobody has earned.
+        if match.get("needs_review"):
+            flagged = True
+            print(f"    ! NEEDS REVIEW: {match.get('review_note') or 'open conflict'}")
         print()
     print("Run  memorysafe explain <id>  to see why one is held.")
+    if flagged:
+        print("Run  memorysafe review-conflicts  to decide the flagged ones.")
 
 
 def _print_written(result: dict) -> None:
@@ -104,9 +113,38 @@ def _print_written(result: dict) -> None:
         if result.get("replaced_memory_id"):
             print(f"  Replaced:   {result['replaced_memory_id']}")
         if result.get("conflict_id"):
-            print(f"  Review:     conflict {result['conflict_id']} is open")
+            # Said "is open" even when the conflict had been resolved automatically.
+            if result["lifecycle"] == "needs_review":
+                print(f"  Review:     conflict {result['conflict_id']} is open "
+                      "(memorysafe review-conflicts)")
+            else:
+                print(f"  Recorded:   conflict {result['conflict_id']} (resolved automatically; "
+                      f"undo with  memorysafe resolve-conflict {result['conflict_id']} revert --confirm)")
         if result.get("lifecycle_reason"):
             print(f"  Because:    {result['lifecycle_reason']}")
+    if result.get("evicted_memory_ids"):
+        print(f"\n  Evicted:    {', '.join(result['evicted_memory_ids'])} (capacity limit; restorable)")
+
+
+def _print_conflicts(payload: dict) -> None:
+    if not payload["conflicts"]:
+        print("No open conflicts.")
+        return
+    print(f"{payload['count']} conflict(s):\n")
+    for item in payload["conflicts"]:
+        print(f"  Conflict {item['conflict_id']}  {item['decision']}  {item['status']}")
+        for side in ("old", "new"):
+            memory = item.get(side)
+            if memory:
+                print(f"    {side}: {memory['content']}  ({memory['memory_id']}, {memory['state']})")
+        print(f"    {item['reason']} ({item['evidence']})\n")
+    print("Decide with  memorysafe resolve-conflict <id> supersede|keep_both|restore|revert --confirm")
+
+
+def _print_action(result: dict) -> None:
+    print(result.get("reason", ""))
+    if result.get("needs_confirmation"):
+        print("Nothing changed. Add --confirm once the user agrees.")
 
 
 def _print_migration(found: dict, changed: list[str], applied: bool) -> None:
@@ -320,6 +358,31 @@ def main() -> None:
         "fact an agent volunteered is weaker evidence than one the user asked for.",
     )
     remember.add_argument("--json", action="store_true", dest="as_json")
+    # Governance used to be MCP-only, so a host that can only run commands could
+    # write memories but never correct, protect or un-forget one.
+    for name, help_text in (
+        ("protect", "Protect a memory: never evicted; forgetting it needs --confirm."),
+        ("unprotect", "Remove protection from a memory."),
+    ):
+        command = subparsers.add_parser(name, help=help_text)
+        command.add_argument("memory_id")
+        command.add_argument("--json", action="store_true", dest="as_json")
+    forget = subparsers.add_parser("forget", help="Remove a memory from recall (not an erase).")
+    forget.add_argument("memory_id")
+    forget.add_argument("--confirm", action="store_true", help="Required for a protected memory.")
+    forget.add_argument("--json", action="store_true", dest="as_json")
+    restore = subparsers.add_parser("restore", help="Put a forgotten, superseded or evicted memory back.")
+    restore.add_argument("memory_id")
+    restore.add_argument("--confirm", action="store_true")
+    restore.add_argument("--json", action="store_true", dest="as_json")
+    review = subparsers.add_parser("review-conflicts", help="List open conflicts. Changes nothing.")
+    review.add_argument("--all", action="store_true", dest="include_resolved", help="Include resolved ones.")
+    review.add_argument("--json", action="store_true", dest="as_json")
+    resolve = subparsers.add_parser("resolve-conflict", help="Decide a conflict. Changes nothing without --confirm.")
+    resolve.add_argument("conflict_id", type=int)
+    resolve.add_argument("action", choices=("supersede", "keep_both", "restore", "revert"))
+    resolve.add_argument("--confirm", action="store_true")
+    resolve.add_argument("--json", action="store_true", dest="as_json")
     migrate = subparsers.add_parser(
         "migrate",
         help="Remove the manual MemorySafe registrations the plugins replace. Changes nothing without --apply.",
@@ -423,6 +486,28 @@ def main() -> None:
             print(json.dumps(written, indent=2, sort_keys=True))
         else:
             _print_written(written)
+        return
+
+    if args.command in {"protect", "unprotect", "forget", "restore", "review-conflicts", "resolve-conflict"}:
+        from .storage import MemoryStore
+
+        store = MemoryStore(_resolve_database(args.install_root))
+        if args.command in {"protect", "unprotect"}:
+            result = store.protect(args.memory_id, protected=args.command == "protect")
+        elif args.command == "forget":
+            result = store.forget(args.memory_id, confirm=args.confirm)
+        elif args.command == "restore":
+            result = store.restore(args.memory_id, confirm=args.confirm)
+        elif args.command == "review-conflicts":
+            result = store.review_conflicts(include_resolved=args.include_resolved)
+        else:
+            result = store.resolve_conflict(args.conflict_id, args.action, confirm=args.confirm)
+        if args.as_json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif args.command == "review-conflicts":
+            _print_conflicts(result)
+        else:
+            _print_action(result)
         return
 
     if args.command == "explain":

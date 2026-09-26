@@ -31,6 +31,8 @@ MemorySafe is a private local memory layer with explicit manual controls and an 
 8. When forgetting is ambiguous, call `memorysafe_find`, show the intended memory, and ask for confirmation before `memorysafe_forget`.
 9. Describe token numbers accurately. Live counters measure local MemorySafe content; modelled savings figures are not anyone's billed usage.
 10. To show the dashboard, call `memorysafe_health` with `open=true`, or tell the user to open `http://127.0.0.1:8765/dashboard` on this computer.
+11. Call `memorysafe_protect` only when the user asks to protect (or, with `protect=false`, unprotect) a memory. Forgetting a protected memory needs `confirm=true` after the user agrees.
+12. When a `memorysafe_find` result has `needs_review`, say the fact is in dispute and quote its `review_note`; do not state it as settled. Offer `memorysafe_review_conflicts`. If the user says a newer update was wrong, `memorysafe_resolve_conflict` with `action=revert` and `confirm=true` rejects it and brings back the prior fact.
 
 ## First start
 
