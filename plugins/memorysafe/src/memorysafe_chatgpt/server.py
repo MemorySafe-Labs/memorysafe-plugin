@@ -34,6 +34,7 @@ class RememberResult(BaseModel):
     replaced_memory_id: str | None = None
     conflict_id: int | None = None
     lifecycle_reason: str | None = None
+    evicted_memory_ids: list[str] = []
 
 
 class MemoryMatch(BaseModel):
@@ -45,6 +46,11 @@ class MemoryMatch(BaseModel):
     protected: bool
     match_score: float
     updated_at: str
+    # An open conflict must travel with the fact, or the assistant repeats a stale
+    # or contested fact with full certainty.
+    needs_review: bool = False
+    open_conflict_ids: list[int] = []
+    review_note: str | None = None
 
 
 class FindResult(BaseModel):
@@ -86,6 +92,7 @@ class ForgetResult(BaseModel):
     # Forgetting one side of a conflict closes it. Declared so the count is not
     # silently dropped the way the health counters were.
     conflicts_closed: int = 0
+    needs_confirmation: bool = False
 
 
 class RestoreResult(BaseModel):
@@ -93,6 +100,14 @@ class RestoreResult(BaseModel):
     memory_id: str
     reason: str
     needs_confirmation: bool = False
+    reopened_conflicts: list[int] = []
+
+
+class ProtectResult(BaseModel):
+    memory_id: str
+    changed: bool
+    protected: bool
+    reason: str
 
 
 class ConflictItem(BaseModel):
@@ -120,6 +135,7 @@ class ResolveConflictResult(BaseModel):
     old_memory_id: str | None = None
     new_memory_id: str | None = None
     needs_confirmation: bool = False
+    conflict_status: str | None = None
 
 
 class ExplainResult(BaseModel):
@@ -129,6 +145,7 @@ class ExplainResult(BaseModel):
     protected: bool | None = None
     protected_because: str | None = None
     protected_since: str | None = None
+    confidence: float | None = None
     recall_count: int | None = None
     state: str | None = None
     history: list[dict[str, Any]] = []
@@ -230,6 +247,9 @@ class HealthResult(BaseModel):
     # Declared, or Pydantic drops it before it reaches the dashboard -- the same
     # leak that already cost the recall telemetry and the conflict counters.
     governance_events: list[dict[str, Any]] = []
+    conflict_penalty: int = 0
+    evicted_memories: int = 0
+    max_active: int | None = None
 
 
 class RecallSummary(BaseModel):
@@ -540,7 +560,8 @@ def find_memories(
     title="Forget a memory",
     description=(
         "Remove one memory from active recall, only when the user asks. This is not a "
-        "permanent erase. Without an exact ID, find and confirm it first."
+        "permanent erase. Without an exact ID, find and confirm it first. Protected "
+        "memories need confirm=true."
     ),
     annotations=ToolAnnotations(
         readOnlyHint=False,
@@ -551,8 +572,32 @@ def find_memories(
 )
 def forget_memory(
     memory_id: Annotated[str, Field(min_length=1, max_length=80, description="Exact memory ID.")],
+    confirm: Annotated[
+        bool, Field(description="Required for a protected memory, after the user agrees.")
+    ] = False,
 ) -> ForgetResult:
-    return ForgetResult.model_validate(_store().forget(memory_id))
+    return ForgetResult.model_validate(_store().forget(memory_id, confirm=confirm))
+
+
+@server.tool(
+    name="memorysafe_protect",
+    title="Protect or unprotect a memory",
+    description=(
+        "Protect one memory (never evicted; forgetting needs confirmation), or pass "
+        "protect=false to remove protection. Only when the user asks. Audited."
+    ),
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
+def protect_memory(
+    memory_id: Annotated[str, Field(min_length=1, max_length=80, description="Exact memory ID.")],
+    protect: Annotated[bool, Field(description="true protects, false unprotects.")] = True,
+) -> ProtectResult:
+    return ProtectResult.model_validate(_store().protect(memory_id, protected=protect))
 
 
 @server.tool(
@@ -603,7 +648,8 @@ def review_conflicts(
     name="memorysafe_resolve_conflict",
     title="Resolve a memory conflict",
     description=(
-        "Supersede, keep both, or restore. Requires confirm=true after the user agrees. "
+        "Supersede, keep both, restore (conflict stays open), or revert (reject the newer "
+        "update, bring back the prior fact). Requires confirm=true after the user agrees. "
         "Nothing changes without that confirmation."
     ),
     annotations=ToolAnnotations(
@@ -616,8 +662,8 @@ def review_conflicts(
 def resolve_conflict(
     conflict_id: Annotated[int, Field(ge=1, description="Conflict ID from review.")],
     action: Annotated[
-        Literal["supersede", "keep_both", "restore"],
-        Field(description="supersede, keep_both, or restore."),
+        Literal["supersede", "keep_both", "restore", "revert"],
+        Field(description="supersede, keep_both, restore, or revert."),
     ],
     confirm: Annotated[
         bool, Field(description="Must be true; otherwise nothing is changed.")
