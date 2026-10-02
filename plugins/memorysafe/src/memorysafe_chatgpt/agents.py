@@ -431,7 +431,8 @@ def _process_command(argv: list[str], platform: str, env: Mapping[str, str]) -> 
 
     Every argument is a constant from plan(), none comes from a request, and the path is
     quoted with /s so a username with a space in it survives. COMSPEC is not inherited by
-    an MCP-spawned process on Windows (see CLAUDE.md), so cmd.exe comes from SYSTEMROOT.
+    an MCP-spawned process on Windows (the MCP SDK passes a short fixed list of variables),
+    so cmd.exe comes from SYSTEMROOT.
     The path is joined as a Windows path whatever the host, so the test runs on CI too.
     """
 
