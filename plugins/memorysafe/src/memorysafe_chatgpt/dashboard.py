@@ -805,7 +805,7 @@ def dashboard_html(local_api_token: str | None = None) -> str:
         setText("agents-yes", `Yes, connect ${pronoun}`);
       }
       byId("agents-auto").hidden = autoConnect !== true;
-      const connected = present.filter((agent) => agent.connected).length;
+      const connected = present.filter((agent) => agent.connected || agent.covered).length;
       setText("agents-note", `${present.length} FOUND · ${connected} CONNECTED`);
       if (!present.length) {
         list.append(agentNode("div", "empty", "No assistants found on this computer yet."));
@@ -814,12 +814,16 @@ def dashboard_html(local_api_token: str | None = None) -> str:
         const row = agentNode("div", "agent");
         const copy = agentNode("div", "agent-copy");
         copy.append(agentNode("span", "agent-name", agent.label));
-        const note = agent.connected
+        const note = agent.covered
+          ? String(agent.note ?? "")
+          : agent.connected
           ? `Connected through its ${agent.how}.`
           : agent.can_connect ? "Installed here. Not connected yet." : String(agent.next_step ?? "");
         copy.append(agentNode("span", "agent-note", note));
         row.append(copy);
-        if (agent.connected) {
+        if (agent.covered) {
+          row.append(agentNode("span", "agent-state on", "COVERED"));
+        } else if (agent.connected) {
           row.append(agentNode("span", "agent-state on", "CONNECTED"));
         } else if (agent.can_connect) {
           const button = agentNode("button", "agent-connect", "Connect");

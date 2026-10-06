@@ -276,6 +276,8 @@ def _print_connect(agents: list[dict], results: list[dict], applied: bool) -> No
                 restart.append(label)
         elif agent["connected"]:
             print(f"  ✓ {label:15s} connected ({agent['how']})")
+        elif agent.get("covered"):
+            print(f"  ✓ {label:15s} {agent['note']}")
         elif agent["can_connect"]:
             commands = "  then  ".join(command_line(argv, os.environ, sys.platform) for argv in plan(agent, home))
             print(f"  → {label:15s} not connected -> would run  {commands}")

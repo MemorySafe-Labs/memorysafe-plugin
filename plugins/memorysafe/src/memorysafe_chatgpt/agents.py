@@ -111,7 +111,14 @@ def _codex_cli_candidates(home: Path, env: Mapping[str, str], platform: str) -> 
             *bundled,
             home / ".codex" / "plugins" / ".plugin-appserver" / "codex.exe",
         ]
-    return [home / ".local" / "bin" / "codex", *(folder / "codex" for folder in _POSIX_BIN_DIRS)]
+    # The Codex desktop app puts no codex on PATH either, but its plugin app server carries the
+    # full CLI (codex-cli 0.160.0 there, with `plugin add`). Without this a tester with only the
+    # app got terminal instructions instead of a Connect button.
+    return [
+        home / ".local" / "bin" / "codex",
+        *(folder / "codex" for folder in _POSIX_BIN_DIRS),
+        home / ".codex" / "plugins" / ".plugin-appserver" / "codex-cli" / "bin" / "codex",
+    ]
 
 
 def find_cli(name: str, home: Path, env: Mapping[str, str], platform: str) -> str | None:
@@ -205,6 +212,8 @@ def _entry(agent_id: str, label: str) -> dict[str, Any]:
         "label": label,
         "present": False,
         "connected": False,
+        # True when this one is not connected itself but is served by another entry's connection.
+        "covered": False,
         # plugin, manual, extension or config: how MemorySafe reaches it today.
         "how": None,
         "can_connect": False,
@@ -310,6 +319,26 @@ def _note_what_connecting_claude_code_is_for(entries: list[dict[str, Any]]) -> N
     )
 
 
+def _mark_claude_code_served_by_the_extension(entries: list[dict[str, Any]]) -> None:
+    """Claude Code with no claude command is only ever the desktop app's Code tab.
+
+    That tab already reaches MemorySafe through the extension, and without the command there
+    is nothing a plugin could be installed with, so an amber "one step left" asked for
+    something that was not needed. The row stays unconnected (nothing was installed for it);
+    it is marked covered so each screen can say so. doctor.py reaches the same conclusion.
+    """
+
+    found = {entry["id"]: entry for entry in entries}
+    desktop, code = found.get("claude_desktop"), found.get("claude_code")
+    if desktop is None or code is None or desktop.get("how") != "extension":
+        return
+    if code.get("connected") or code.get("can_connect") or code.get("command"):
+        return
+    code["covered"] = True
+    code["next_step"] = None
+    code["note"] = "Sessions in the Claude desktop app's Code tab reach MemorySafe through its extension."
+
+
 def inventory(
     home: Path | None = None, env: Mapping[str, str] | None = None, platform: str | None = None
 ) -> list[dict[str, Any]]:
@@ -318,6 +347,7 @@ def inventory(
     platform = platform or sys.platform
     entries = [_claude_desktop(home, env, platform), _claude_code(home, env, platform), _codex(home, env, platform)]
     _note_what_connecting_claude_code_is_for(entries)
+    _mark_claude_code_served_by_the_extension(entries)
     return entries
 
 
