@@ -6,7 +6,6 @@ import unicodedata
 import sqlite3
 import uuid
 from collections import Counter
-from contextlib import closing, contextmanager
 from functools import lru_cache
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
@@ -14,7 +13,9 @@ from pathlib import Path
 from typing import Any
 
 from .token_metrics import count_text_tokens, tokenizer_metadata
-from .lifecycle import consider_incoming, extract_values, record_relation
+from .lifecycle import consider_incoming, extract_values, merge_compatible, record_relation
+from .backends import Backend
+from .backends.sqlite import SqliteBackend
 
 
 # The numbers here used to be hand-entered constants with no derivation anywhere in
@@ -259,14 +260,6 @@ def _similarity(left: str, right: str, minimum: float = 0.0) -> float:
     return (0.6 * jaccard) + (0.4 * sequence)
 
 
-def _display_path(path: Path) -> str:
-    """Home-relative rendering of a database path, for display only."""
-    try:
-        return "~/" + str(path.resolve().relative_to(Path.home()))
-    except ValueError:
-        return str(path)
-
-
 def _days_since(timestamp: str | None) -> int | None:
     """Whole days between an ISO-8601 event timestamp and now, or None if unreadable.
 
@@ -309,154 +302,28 @@ def _why_protected(category: str, importance: float, source: str) -> str:
 
 
 class MemoryStore:
-    """Small single-user SQLite store for the private beta connector."""
+    """One user's memories: the engine that decides, over a backend that stores.
 
-    def __init__(self, database_path: Path):
-        self.database_path = database_path
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
+    Everything that decides -- merging, supersession, recall scoring, protection --
+    lives here and runs the same on every backend. The backend only opens a
+    transaction and owns the schema: SqliteBackend for the local file, and
+    PostgresBackend for the hosted edition.
+    """
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        # Wait rather than fail when another client holds the database. One store can be
-        # shared by Claude, ChatGPT and Codex at once, so contention is normal.
-        connection.execute("PRAGMA busy_timeout = 30000")
-        # Switching to WAL needs a brief exclusive lock, so it raises "database is locked"
-        # if another client is mid-write. The mode is persisted in the file, so once any
-        # connection has set it the rest inherit it — failing here would abort startup for
-        # no reason. Verify instead of assuming.
-        try:
-            connection.execute("PRAGMA journal_mode = WAL")
-            # Without a checkpoint the WAL grows without bound and the main database
-            # stays stale: copying memorysafe.sqlite3 on its own then silently loses
-            # every memory still held in the sidecar. Folding it back in on open keeps
-            # the main file a truthful copy of the store.
-            connection.execute("PRAGMA wal_autocheckpoint = 200")
-        except sqlite3.OperationalError:
-            mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
-            if str(mode).lower() != "wal":
-                raise
-        return connection
+    def __init__(self, database_path: Path | None = None, *, backend: Backend | None = None):
+        if backend is None:
+            if database_path is None:
+                raise TypeError("MemoryStore needs a database_path or a backend.")
+            backend = SqliteBackend(database_path)
+        self._backend = backend
+        # Only a local store has a file. Callers that copy, snapshot or display it read
+        # this; on the hosted edition it is None.
+        self.database_path = backend.database_path
+        backend.initialize()
 
-    @contextmanager
     def _session(self):
-        """Open one connection for one operation, commit-or-rollback it, then close it.
-
-        `with <sqlite3.Connection>:` only manages the transaction -- it commits on a
-        clean exit and rolls back on an exception, but it leaves the connection OPEN.
-        That was invisible on POSIX, where unlinking an open file is legal, but on
-        Windows SQLite opens the database file without FILE_SHARE_DELETE: a connection
-        left open here by e.g. `remember()` blocked doctor.py's support-bundle copy,
-        `memorysafe migrate`, and a user backing up or moving their own store, minutes
-        or even processes later. This wraps the same commit/rollback semantics in a
-        `finally: connection.close()` so every operation still leaves nothing open,
-        without introducing a pooled or cached connection -- a fresh connection per
-        operation is still what lets several assistant processes write to this file
-        at once.
-        """
-        connection = self._connect()
-        try:
-            with connection:
-                yield connection
-        finally:
-            connection.close()
-
-    def _initialize(self) -> None:
-        with self._session() as connection:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS memories (
-                    id TEXT PRIMARY KEY,
-                    content TEXT NOT NULL,
-                    normalized_content TEXT NOT NULL,
-                    category TEXT NOT NULL,
-                    importance REAL NOT NULL,
-                    confidence REAL NOT NULL,
-                    protected INTEGER NOT NULL,
-                    state TEXT NOT NULL DEFAULT 'active',
-                    source TEXT NOT NULL DEFAULT 'chatgpt',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    deleted_at TEXT
-                );
-
-                CREATE INDEX IF NOT EXISTS memories_active_category
-                    ON memories(state, category);
-                CREATE INDEX IF NOT EXISTS memories_normalized
-                    ON memories(normalized_content);
-
-                -- Near-duplicate detection asks for the most recent 250 in a category
-                -- on every write. Without updated_at in the index that ordering sorts
-                -- the whole table, so writes got slower as the store grew: 8 ms at a
-                -- hundred memories, 21 ms at two thousand.
-                CREATE INDEX IF NOT EXISTS memories_recent_by_category
-                    ON memories(state, category, updated_at DESC);
-                -- The lifecycle check reads the most recent active memories of every
-                -- category on each new write; without this it sorted them every time.
-                CREATE INDEX IF NOT EXISTS memories_recent_active
-                    ON memories(state, updated_at DESC);
-
-
-                CREATE TABLE IF NOT EXISTS decision_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    decision TEXT NOT NULL,
-                    memory_id TEXT,
-                    reason TEXT NOT NULL,
-                    content_bytes INTEGER NOT NULL DEFAULT 0,
-                    source TEXT NOT NULL DEFAULT 'manual',
-                    created_at TEXT NOT NULL
-                );
-
-                -- Recall writes an event per search; the health summary reads them back.
-                CREATE INDEX IF NOT EXISTS decision_events_decision
-                    ON decision_events(decision, id DESC);
-
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-
-                -- Evidence-based replacement. Age never writes a row here.
-                CREATE TABLE IF NOT EXISTS memory_relations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    old_memory_id TEXT NOT NULL,
-                    new_memory_id TEXT NOT NULL,
-                    decision TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    evidence TEXT NOT NULL,
-                    confidence REAL NOT NULL,
-                    source TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    resolved_at TEXT
-                );
-                CREATE INDEX IF NOT EXISTS memory_relations_status
-                    ON memory_relations(status, id DESC);
-                CREATE INDEX IF NOT EXISTS memory_relations_old
-                    ON memory_relations(old_memory_id);
-                """
-            )
-            event_columns = {
-                row["name"]
-                for row in connection.execute("PRAGMA table_info(decision_events)").fetchall()
-            }
-            if "source" not in event_columns:
-                connection.execute(
-                    "ALTER TABLE decision_events ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'"
-                )
-            memory_columns = {
-                row["name"]
-                for row in connection.execute("PRAGMA table_info(memories)").fetchall()
-            }
-            if "recall_count" not in memory_columns:
-                # Existing stores start at zero rather than unknown: no recall was
-                # recorded before this column existed, so zero is the honest value.
-                connection.execute(
-                    "ALTER TABLE memories ADD COLUMN recall_count INTEGER NOT NULL DEFAULT 0"
-                )
+        """One connection for one operation, committed or rolled back, then closed."""
+        return self._backend.session()
 
     def explain(self, memory_id: str) -> dict[str, Any]:
         """Why this memory is held, and on whose decision.
@@ -587,10 +454,10 @@ class MemoryStore:
         if total <= keep:
             return
         connection.execute(
-            """
+            f"""
             INSERT INTO settings(key, value, updated_at)
             VALUES ('recall_events_pruned', ?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = CAST(
+            ON CONFLICT({self._backend.settings_conflict_target}) DO UPDATE SET value = CAST(
                 CAST(settings.value AS INTEGER) + ? AS TEXT
             ), updated_at = excluded.updated_at
             """,
@@ -608,55 +475,12 @@ class MemoryStore:
         )
 
     def snapshot(self, keep: int = 5) -> Path | None:
-        """Take a consistent copy of the store, keeping the last few.
-
-        A corrupted database ended every operation with "database disk image is
-        malformed" and nothing else: no repair, no earlier copy, no guidance. For a
-        product whose whole promise is not losing things, one bad write was total loss.
-
-        Uses SQLite's own backup API rather than copying the file, so a snapshot taken
-        while the assistants are writing is still consistent.
-        """
-
-        directory = self.database_path.parent / "snapshots"
-        directory.mkdir(parents=True, exist_ok=True)
-        # Second precision let two snapshots in the same second collide and overwrite,
-        # so the retained set was smaller than it claimed. Microseconds make each one
-        # distinct without depending on a counter.
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
-        target = directory / f"memorysafe-{stamp}.sqlite3"
-        try:
-            # Two connections here, not one: the source (this store) and the fresh
-            # snapshot file being written. Both leaked on the old `with sqlite3.connect(...)
-            # as x:` pattern, so both need an explicit close -- `_session()` for the
-            # source, `contextlib.closing()` for the destination (its own `with
-            # destination:` still gives it the same commit/rollback semantics it had
-            # before).
-            with self._session() as source, closing(sqlite3.connect(target)) as destination:
-                with destination:
-                    source.backup(destination)
-        except sqlite3.Error:
-            return None
-
-        # Keep the newest few. Snapshots that accumulate for ever are their own problem.
-        existing = sorted(directory.glob("memorysafe-*.sqlite3"))
-        for stale in existing[:-keep]:
-            stale.unlink(missing_ok=True)
-        return target
+        """Take a consistent copy of the store, keeping the last few (SqliteBackend.snapshot)."""
+        return self._backend.snapshot(keep)
 
     def checkpoint(self) -> dict[str, int]:
-        """Fold the write-ahead log back into the main database file.
-
-        Call before copying, moving or backing up the store. Until this runs, the
-        newest memories exist only in memorysafe.sqlite3-wal, and a copy of
-        memorysafe.sqlite3 alone brings back an older, smaller store without saying so.
-        """
-
-        with self._session() as connection:
-            busy, written, checkpointed = connection.execute(
-                "PRAGMA wal_checkpoint(TRUNCATE)"
-            ).fetchone()
-        return {"busy": int(busy), "pages_written": int(written), "pages_checkpointed": int(checkpointed)}
+        """Fold the write-ahead log into the main file (SqliteBackend.checkpoint)."""
+        return self._backend.checkpoint()
 
     def _record_event(
         self,
@@ -687,10 +511,10 @@ class MemoryStore:
         value = "enabled" if enabled else "disabled"
         with self._session() as connection:
             connection.execute(
-                """
+                f"""
                 INSERT INTO settings(key, value, updated_at)
                 VALUES ('automatic_mode', ?, ?)
-                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                ON CONFLICT({self._backend.settings_conflict_target}) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
                 """,
                 (value, _now()),
             )
@@ -776,14 +600,16 @@ class MemoryStore:
             importance = 0.85
 
         with self._session() as connection:
-            exact = connection.execute(
+            exact_matches = connection.execute(
                 """
                 SELECT * FROM memories
                 WHERE state = 'active' AND normalized_content = ?
-                ORDER BY updated_at DESC LIMIT 1
+                ORDER BY updated_at DESC
                 """,
                 (normalized,),
-            ).fetchone()
+            ).fetchall()
+            exact = next((row for row in exact_matches
+                          if merge_compatible(clean_content, row["content"])), None)
             if exact:
                 must_protect = self._protection_rule(category, importance, anchored, routine=False)
                 protected = bool(exact["protected"] or must_protect)
@@ -821,7 +647,7 @@ class MemoryStore:
             # was most of the write path's time once duplicates stopped being merged.
             candidates = connection.execute(
                 """
-                SELECT normalized_content, id FROM memories
+                SELECT normalized_content, id, content FROM memories
                 WHERE state = 'active' AND category = ?
                 ORDER BY updated_at DESC LIMIT 250
                 """,
@@ -842,6 +668,8 @@ class MemoryStore:
                 # into "item 7, room 7" at similarity 0.92 and its text was lost.
                 if _number_tokens(row_normalized) != numbers:
                     continue
+                if not merge_compatible(clean_content, row["content"]):
+                    continue
                 score = _similarity(normalized, row_normalized, minimum=MERGE_THRESHOLD)
                 if score > closest_score:
                     closest, closest_score = row, score
@@ -857,7 +685,8 @@ class MemoryStore:
                 protected = bool(closest["protected"] or must_protect)
                 new_importance = max(float(closest["importance"]), importance)
                 new_confidence = max(float(closest["confidence"]), confidence)
-                replacement = clean_content if len(clean_content) >= len(closest["content"]) else closest["content"]
+                replacement = (clean_content if confidence >= float(closest["confidence"])
+                               and len(clean_content) >= len(closest["content"]) else closest["content"])
                 # Never lose text on a merge: whichever wording is not kept as the
                 # content is written into the history, where explain can show it.
                 kept_note = ""
@@ -1024,7 +853,8 @@ class MemoryStore:
         self, connection: sqlite3.Connection, cap: int, keep_id: str | None = None
     ) -> list[str]:
         """Evict down to `cap` active memories, least valuable first. Protected
-        memories are never evicted, and neither is the memory just written.
+        memories, open-conflict participants and the memory just written are
+        never evicted. If only these remain, the target can be exceeded.
 
         Order: never-recalled before recalled, routine (shares its wording apart from
         numbers with 2+ other active memories) before one-off, then lower importance,
@@ -1047,7 +877,14 @@ class MemoryStore:
             """
         ).fetchall()
         templates = Counter(_template(row["normalized_content"]) for row in rows)
-        candidates = [row for row in rows if not row["protected"] and row["id"] != keep_id]
+        # A confidence review promises both sides remain available. Eviction must
+        # not undo that decision immediately, or on a later unrelated write.
+        unresolved = {str(row[0]) for row in connection.execute("""
+            SELECT old_memory_id FROM memory_relations WHERE status = 'open'
+            UNION SELECT new_memory_id FROM memory_relations WHERE status = 'open'
+        """)}
+        candidates = [row for row in rows if not row["protected"]
+                      and row["id"] != keep_id and row["id"] not in unresolved]
 
         def value(row: sqlite3.Row) -> tuple:
             siblings = templates[_template(row["normalized_content"])] - 1
@@ -2022,21 +1859,7 @@ class MemoryStore:
         )
         tokenization = tokenizer_metadata()
 
-        try:
-            # WAL mode keeps recent commits in a sidecar file. Measuring only the main
-            # database under-reports the store several times over once the WAL grows,
-            # and it is the same oversight that makes a naive file copy lose memories.
-            database_bytes = sum(
-                path.stat().st_size
-                for path in (
-                    self.database_path,
-                    self.database_path.with_name(self.database_path.name + "-wal"),
-                    self.database_path.with_name(self.database_path.name + "-shm"),
-                )
-                if path.exists()
-            )
-        except FileNotFoundError:
-            database_bytes = 0
+        database_bytes = self._backend.storage_bytes()
 
         # Break-even depends on how big this user's memories actually are, so use the
         # observed average rather than a stored assumption. A store of one-line
@@ -2118,6 +1941,5 @@ class MemoryStore:
                 "about whether anything is still arriving -- read capture_freshness for that."
             ),
             # An empty store is ambiguous unless you can see which database is being read.
-            # Shown home-relative so the path is legible without exposing the account name.
-            "database_path": _display_path(self.database_path),
+            "database_path": self._backend.location(),
         }

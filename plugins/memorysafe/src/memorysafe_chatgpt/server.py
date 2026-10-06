@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any, Annotated, Literal
 
 from mcp.server.mcpserver import MCPServer
@@ -348,9 +349,24 @@ def _default_database_path() -> Path:
 
 
 _stores: dict[Path, MemoryStore] = {}
+_store_provider: Callable[[], MemoryStore] | None = None
+
+
+def use_store_provider(provider: Callable[[], MemoryStore] | None) -> None:
+    """Let a deployment choose the store per call; None restores the local file.
+
+    A process that serves many users cannot key the store by a file path or an
+    environment variable, since both are the same for every caller. It supplies the
+    store itself, and is asked on every call so one user's store is never reused for
+    the next.
+    """
+    global _store_provider
+    _store_provider = provider
 
 
 def _store() -> MemoryStore:
+    if _store_provider is not None:
+        return _store_provider()
     configured = os.environ.get("MEMORYSAFE_DB_PATH")
     path = Path(configured).expanduser().resolve() if configured else _default_database_path()
     if path not in _stores:

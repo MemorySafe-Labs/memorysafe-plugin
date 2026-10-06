@@ -22,6 +22,8 @@ from functools import lru_cache
 import re
 from typing import Any
 
+from .backends import insert_returning_id
+
 
 def _text():
     # Imported lazily: storage.remember() calls this module, so a top-level
@@ -66,7 +68,7 @@ _CHANGE_WORDS = frozenset(
     """
     now moved move moves switched switch switches changed change changes updated update
     replaced replacing replace replaces instead upgraded upgrade downgraded rescheduled
-    postponed pushed new no longer from to anymore was were became become has have
+    postponed pushed new no longer from to anymore was were became become has have starts begins
     """.split()
 )
 
@@ -199,11 +201,11 @@ def extract_slots(content: str) -> tuple[tuple[str, str, str], ...]:
         if subject and _looks_like_a_person(subject):
             add("lives_in", subject, match.group("value"))
     if match := _WORKS_AT.search(clean):
-        add("works_at", "", match.group(1))
+        add("works_at", clean[:match.start()], match.group(1))
     if match := _WORKS_AS.search(clean):
-        add("works_as", "", match.group(1))
+        add("works_as", clean[:match.start()], match.group(1))
     if match := _PREFERS.search(clean):
-        add("prefers", "", match.group(1))
+        add("prefers", clean[:match.start()], match.group(1))
     if match := _DEADLINE.search(clean):
         add("deadline", match.group("subject"), match.group("value"))
     elif match := _BARE_DEADLINE.search(clean):
@@ -304,7 +306,8 @@ def extract_values(content: str) -> tuple[dict[str, frozenset], frozenset[str], 
         g = match.groupdict()
         raw = (g["a1"] or g["a2"]).replace(",", "")
         amount = float(raw) * {"k": 1e3, "m": 1e6}.get((g["k1"] or "").casefold(), 1)
-        take("percent" if g["pct"] else "amount", amount, match)
+        take("percent" if g["pct"] else "amount",
+             amount if g["pct"] else (g["cur"], amount), match)
 
     def covered(start: int, end: int) -> bool:
         return any(a <= start and end <= b for a, b in spans)
@@ -353,6 +356,56 @@ _FROM_TO = re.compile(
 )
 
 
+_INSTALLATION_SCOPE = re.compile(
+    r"\b(?:installed|deployed|running|runs)\s+on\s+(.+?)"
+    r"(?=\s+on\s+\d|[,;]|\s+(?:replacing|instead|since)\b|[.]?$)", re.IGNORECASE,
+)
+
+
+def _different_installations(new_content: str, old_content: str) -> bool:
+    new = _INSTALLATION_SCOPE.search(new_content)
+    old = _INSTALLATION_SCOPE.search(old_content)
+    return bool(new and old and _norm_slot(new.group(1)) != _norm_slot(old.group(1)))
+
+
+_NEGATION = re.compile(r"\b(?:not|no|never|without|cannot|\w+n['’]t)\b", re.IGNORECASE)
+
+
+@lru_cache(maxsize=4096)
+def merge_compatible(new_content: str, old_content: str) -> bool:
+    """Similarity is not evidence of equivalence. Keep differing facts separate.
+
+    Normalization erases punctuation (including currency), while high similarity
+    can hide negation or another entity. Only formatting and a narrow redundant
+    emphasis variant are merged; unknown paraphrases remain separate records.
+    This also guards normalized keys written by older releases, without migration.
+    """
+    _, normalize, _ = _text()
+    new_values, new_ids, _ = extract_values(new_content)
+    old_values, old_ids, _ = extract_values(old_content)
+    if new_values != old_values or new_ids != old_ids:
+        return False
+    if tuple(_NEGATION.findall(new_content.casefold())) != tuple(_NEGATION.findall(old_content.casefold())):
+        return False
+    def wording(text):
+        return re.sub(r"\bevery single\b", "every", normalize(text))
+    return wording(new_content) == wording(old_content)
+
+
+def _negation_change(new_content: str, old_content: str) -> dict[str, Any] | None:
+    new_neg = tuple(_NEGATION.findall(new_content.casefold()))
+    old_neg = tuple(_NEGATION.findall(old_content.casefold()))
+    if new_neg == old_neg:
+        return None
+    terms, _, similarity = _text()
+    new_plain = _NEGATION.sub(" ", new_content)
+    old_plain = _NEGATION.sub(" ", old_content)
+    if (terms(new_plain) and terms(new_plain) == terms(old_plain)) or similarity(new_plain, old_plain) >= 0.8:
+        return {"action": "review", "reason": "Negation changed; confirm which statement is valid.",
+                "evidence": "Different negative wording in otherwise similar statements.", "confidence": 0.5}
+    return None
+
+
 def _value_change(new_content: str, old_content: str, change_language: bool) -> dict[str, Any] | None:
     """Same subject, different date/time/amount/version, or an explicit X -> Y."""
 
@@ -376,11 +429,19 @@ def _value_change(new_content: str, old_content: str, change_language: bool) -> 
         old_terms = content_terms(old_content)
         if before_terms and before_terms <= old_terms and not (after_terms & old_terms):
             shared = (new_frame - after_terms) & (old_frame - before_terms)
-            if shared or len(old_frame) <= 2:
+            # A shared word like "database" cannot equate backend and analytics.
+            grammar = {"use", "uses", "using"}
+            old_subject = old_frame - before_terms - grammar
+            new_subject = new_frame - before_terms - after_terms - grammar
+            if shared and old_subject == new_subject:
                 return {"action": "contradict",
                         "reason": "A later fact says the value changed from the one this memory holds.",
                         "evidence": f"changed: '{before}' -> '{after}'",
                         "confidence": 0.92}
+            if shared:
+                return {"action": "review", "reason": "The changed value may belong to a different subject.",
+                        "evidence": "Subject qualifiers differ; shared words do not establish identity.",
+                        "confidence": 0.4}
 
     if not new_frame or not old_frame:
         return None
@@ -404,6 +465,21 @@ def _value_change(new_content: str, old_content: str, change_language: bool) -> 
             changed.append(f"{kind}: {_show(old_values[kind])} vs {_show(new_values[kind])}")
     if not changed:
         return None
+    if new_frame != old_frame:
+        # Explicitly replacing a named version still has a stricter slot path.
+        # Otherwise extra qualifiers may name another machine, system or event.
+        if "version" in new_values and "version" in old_values:
+            return None
+        return {"action": "review", "reason": "Changed values have different subject qualifiers.",
+                "evidence": "; ".join(changed), "confidence": 0.4}
+    if "version" in new_values and "version" in old_values and not change_language:
+        return {"action": "review", "reason": "Versions may describe separate installations.",
+                "evidence": "; ".join(changed), "confidence": 0.5}
+    if any(item.startswith("date:") for item in changed) and not change_language:
+        named_deadlines = [m for m in (_DEADLINE.search(new_content), _DEADLINE.search(old_content)) if m]
+        if len(named_deadlines) != 2 or _norm_slot(named_deadlines[0].group("subject")) != _norm_slot(named_deadlines[1].group("subject")):
+            return {"action": "review", "reason": "Different dates may describe separate occurrences.",
+                    "evidence": "; ".join(changed), "confidence": 0.4}
     return {"action": "contradict",
             "reason": ("A later fact gives a different value for the same subject"
                        + (" and says it changed." if change_language else ".")),
@@ -413,6 +489,9 @@ def _value_change(new_content: str, old_content: str, change_language: bool) -> 
 
 def _show(values: frozenset) -> str:
     def one(value: Any) -> str:
+        if isinstance(value, tuple) and len(value) == 2:
+            currency, amount = value
+            return f"{currency}{amount:g}"
         if isinstance(value, tuple):
             month, day, year = value
             return f"{year or '????'}-{month:02d}-{day:02d}"
@@ -444,7 +523,10 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
     # The bounded call skips SequenceMatcher when the pair cannot be a duplicate;
     # the exact score is only computed if a later branch reports it.
     similarity = similarity_fn(new_norm, old_norm, minimum=MERGE_SIMILARITY)
-    if similarity >= MERGE_SIMILARITY:
+    negation = _negation_change(new_content, old_content)
+    if negation is not None:
+        return negation
+    if similarity >= MERGE_SIMILARITY and merge_compatible(new_content, old_content):
         return {
             "action": "duplicate",
             "reason": "Near-duplicate of an existing memory.",
@@ -483,7 +565,7 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
                 # Versions are exact identifiers, so the elaboration guard below
                 # must not apply: 0.3.4 and 0.3.5 differ by one character and
                 # score as near-identical, yet they name different builds.
-                if similarity_fn(subject, old_subject) < 0.55:
+                if not subject or subject != old_subject:
                     continue
                 version_mismatch.append(f"version: '{old_value}' vs '{value}'")
                 continue
@@ -494,16 +576,17 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
                 # A date without a shared project/entity is not enough to replace.
                 if not subject or not old_subject:
                     continue
-                subj_sim = similarity_fn(subject, old_subject)
-                if subj_sim < 0.55:
+                if subject != old_subject:
                     continue
             elif kind == "titled":
-                if similarity_fn(subject, old_subject) < 0.55:
+                if not subject or subject != old_subject:
                     continue
             elif kind == "lives_in":
                 # "Dana lives in Montreal" says nothing about where Sam lives.
-                if subject and old_subject and similarity_fn(subject, old_subject) < 0.55:
+                if not subject or subject != old_subject:
                     continue
+            elif not subject or subject != old_subject:
+                continue
             conflicting.append(
                 f"{kind}: '{old_value}' vs '{value}'"
             )
@@ -517,7 +600,12 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
             "confidence": 0.86,
         }
 
-    if version_mismatch and replacement:
+    # Different qualifiers may be another installation. Only an explicit mention
+    # of the replaced version can authorize this fallback; simple same-frame
+    # upgrades were already handled by _value_change.
+    old_versions = {value for kind, _, value in old_slots if kind == "version"}
+    mentions_replaced = bool(old_versions & extract_values(new_content)[0].get("version", frozenset()))
+    if version_mismatch and replacement and mentions_replaced and not _different_installations(new_content, old_content):
         return {
             "action": "contradict",
             "reason": "A later fact names a different version of the same thing and says it replaces the old one.",
@@ -624,7 +712,8 @@ def record_relation(
     source: str,
     created_at: str,
 ) -> int:
-    cursor = connection.execute(
+    return insert_returning_id(
+        connection,
         """
         INSERT INTO memory_relations(
             old_memory_id, new_memory_id, decision, status,
@@ -643,4 +732,3 @@ def record_relation(
             created_at,
         ),
     )
-    return int(cursor.lastrowid)

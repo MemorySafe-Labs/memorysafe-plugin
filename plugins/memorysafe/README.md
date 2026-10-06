@@ -1,4 +1,4 @@
-# MemorySafe 0.4.12
+# MemorySafe 0.4.13
 
 Private, governed memory for Claude Code, Claude Desktop and Codex, kept in one SQLite
 file on your own computer. macOS, Linux and Windows.
@@ -123,7 +123,9 @@ Optional capacity limit: set `MEMORYSAFE_MAX_ACTIVE` to cap how many memories st
 recall. It is off unless you set it. Over the limit, MemorySafe moves the least valuable
 unprotected memories out of recall -- routine, never-recalled, low-importance and oldest first --
 records each one in its history, and `restore` brings any of them back. Protected memories are
-never moved out.
+never moved out. Both sides of an unresolved conflict also remain available until
+review. This is a soft target: protected memories and open conflicts can keep the
+active count above it. After resolution, later writes can evict eligible records.
 
 A memory health score reports how well the store is doing: importance and confidence at
 60%, protection of high-value memories at 30%, duplicate cleanliness at 10%, minus 5 points
