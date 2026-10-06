@@ -262,7 +262,18 @@ def dashboard_html(local_api_token: str | None = None) -> str:
       .token-live-grid { grid-template-columns: 1fr; }
       .token-grid { grid-template-columns: 1fr; }
     }
-        details.tech { margin-top: 18px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 12px; }
+        [hidden] { display: none !important; }
+      .fold-panel { margin-top: 10px; }
+      .fold-panel > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+      .fold-panel > summary::-webkit-details-marker { display: none; }
+      .fold-panel > summary strong { font-size: 12px; }
+      .fold-panel > summary strong::before { content: "\25B8"; display: inline-block; width: 14px; color: var(--dim); transition: transform .15s; }
+      .fold-panel[open] > summary strong::before { transform: rotate(90deg); }
+      .fold-panel > summary span { color: var(--dim); font-size: 8px; }
+      .fold-panel[open] > summary { margin-bottom: 11px; }
+      .fold-panel > summary span.needs { color: #ffb454; }
+      .content-grid { grid-template-columns: 1fr; }
+      details.tech { margin-top: 18px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 12px; }
       details.tech summary { cursor: pointer; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; opacity: .6; }
       details.tech p { font-size: 12px; opacity: .65; line-height: 1.6; margin: 10px 0 0; }
     </style>
@@ -328,8 +339,8 @@ def dashboard_html(local_api_token: str | None = None) -> str:
       <p class="agents-auto" id="agents-auto" hidden>Assistants you install later connect automatically.<button class="agents-link" id="agents-auto-off" type="button">Turn off</button></p>
       <p class="agents-message" id="agents-message" hidden></p>
     </section>
-    <section class="panel token-panel" aria-label="Tokens with and without MemorySafe">
-      <div class="panel-title"><strong>With vs without MemorySafe</strong><span class="token-badge">THIS STORE · THIS TURN</span></div>
+    <details class="panel token-panel fold-panel" aria-label="Tokens with and without MemorySafe">
+      <summary><strong>With vs without MemorySafe</strong><span class="token-badge">THIS STORE · THIS TURN</span></summary>
       <div class="compare">
         <div class="compare-card">
           <span>Without MemorySafe</span>
@@ -354,7 +365,7 @@ def dashboard_html(local_api_token: str | None = None) -> str:
         </div>
       </div>
       <p class="token-note" id="token-model">Input tokens on this computer. Not ChatGPT billed usage.</p>
-    </section>
+    </details>
     <section class="metrics" aria-label="What MemorySafe gave back">
       <div class="metric metric-green"><span>Memory searches</span><strong id="recall-count">—</strong><small>find calls recorded by MemorySafe</small></div>
       <div class="metric metric-cyan"><span>Memories used</span><strong id="recall-used">—</strong><small id="recall-used-note">of those stored</small></div>
@@ -366,15 +377,15 @@ def dashboard_html(local_api_token: str | None = None) -> str:
         <div class="panel-title"><strong>Recent memories</strong><span id="memory-count">0 MEMORIES</span></div>
         <div class="memory-list" id="memories"><div class="empty">No memories stored yet.</div></div>
       </div>
-      <div class="panel">
-        <div class="panel-title"><strong>Most used</strong><span>BY RECALL</span></div>
+      <details class="panel fold-panel">
+        <summary><strong>Most used</strong><span>BY RECALL</span></summary>
         <div class="memory-list" id="most-used"><div class="empty">Nothing has been recalled yet.</div></div>
-      </div>
+      </details>
     </section>
-    <section class="panel" aria-label="Governance trail" id="governance-panel" hidden>
-      <div class="panel-title"><strong>Governance trail</strong><span id="governance-note">EVERY DECISION, WITH ITS REASON</span></div>
+    <details class="panel fold-panel" aria-label="Governance trail" id="governance-panel" hidden>
+      <summary><strong>Governance trail</strong><span id="governance-note">EVERY DECISION, WITH ITS REASON</span></summary>
       <div class="memory-list" id="governance"></div>
-    </section>
+    </details>
     <details class="tech">
       <summary>Technical detail</summary>
       <p id="tech-dupes">—</p>
@@ -492,7 +503,7 @@ def dashboard_html(local_api_token: str | None = None) -> str:
       const list = byId("memories");
       list.replaceChildren();
       const memories = Array.isArray(items) ? items : [];
-      setText("memory-count", `${memories.length} ${memories.length === 1 ? "MEMORY" : "MEMORIES"}`);
+      setText("memory-count", `LATEST ${Math.min(memories.length, 3)}`);
       if (!memories.length) {
         const empty = document.createElement("div");
         empty.className = "empty";
@@ -500,7 +511,7 @@ def dashboard_html(local_api_token: str | None = None) -> str:
         list.appendChild(empty);
         return;
       }
-      for (const item of memories.slice(0, 6)) {
+      for (const item of memories.slice(0, 3)) {
         const row = document.createElement("div");
         row.className = `memory${item?.protected ? " protected" : ""}`;
         const dot = document.createElement("span");
@@ -569,6 +580,14 @@ def dashboard_html(local_api_token: str | None = None) -> str:
       const rows = Array.isArray(events) ? events : [];
       if (!rows.length) { panel.hidden = true; return; }
       panel.hidden = false;
+      // Folded by default so it stops crowding the page; this keeps the one thing that needs
+      // the person visible without opening it.
+      const waiting = rows.filter((event) => event?.status === "open").length;
+      const note = document.getElementById("governance-note");
+      if (note) {
+        note.textContent = waiting ? `${waiting} NEED${waiting === 1 ? "S" : ""} A DECISION` : "EVERY DECISION, WITH ITS REASON";
+        note.classList.toggle("needs", waiting > 0);
+      }
 
       const tag = (decision, status) => {
         if (status === "open") return ["gov-review", "NEEDS A DECISION"];
@@ -822,7 +841,7 @@ def dashboard_html(local_api_token: str | None = None) -> str:
         copy.append(agentNode("span", "agent-note", note));
         row.append(copy);
         if (agent.covered) {
-          row.append(agentNode("span", "agent-state on", "COVERED"));
+          row.append(agentNode("span", "agent-state on", "CONNECTED"));
         } else if (agent.connected) {
           row.append(agentNode("span", "agent-state on", "CONNECTED"));
         } else if (agent.can_connect) {

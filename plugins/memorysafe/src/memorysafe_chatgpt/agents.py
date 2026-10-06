@@ -66,6 +66,7 @@ CONNECT_TIMEOUT_SECONDS = 300
 # process was started by launchd or from the Dock. A module constant so the tests can
 # empty it: they must never find a real claude or codex on the machine running them.
 _POSIX_BIN_DIRS = (Path("/opt/homebrew/bin"), Path("/usr/local/bin"))
+_MAC_APP_DIRS = (Path("/Applications"),)
 # setup_app runs detached, with no console, and Windows gives every console program such
 # a process starts a new visible window unless it is asked not to (claude_launcher too).
 _CREATE_NO_WINDOW = 0x08000000
@@ -117,6 +118,13 @@ def _codex_cli_candidates(home: Path, env: Mapping[str, str], platform: str) -> 
     return [
         home / ".local" / "bin" / "codex",
         *(folder / "codex" for folder in _POSIX_BIN_DIRS),
+        # The ChatGPT desktop app, which hosts Codex, carries the CLI inside its bundle (codex-cli
+        # 0.160.1 with `plugin add` on 6 Oct). It is there from the install, unlike the plugin app
+        # server's copy below, which only appears once Codex has first used plugins.
+        *(
+            folder / "ChatGPT.app" / "Contents" / "Resources" / "codex-cli" / "bin" / "codex"
+            for folder in (*_MAC_APP_DIRS, home / "Applications")
+        ),
         home / ".codex" / "plugins" / ".plugin-appserver" / "codex-cli" / "bin" / "codex",
     ]
 
@@ -336,7 +344,9 @@ def _mark_claude_code_served_by_the_extension(entries: list[dict[str, Any]]) -> 
         return
     code["covered"] = True
     code["next_step"] = None
-    code["note"] = "Sessions in the Claude desktop app's Code tab reach MemorySafe through its extension."
+    # Shown as CONNECTED: it works, and "covered" read like a lesser status. The flag stays separate
+    # because nothing was installed for Claude Code itself, which uninstall and doctor must know.
+    code["note"] = "Connected through Claude Desktop. Claude Code in its Code tab uses the same MemorySafe extension."
 
 
 def inventory(

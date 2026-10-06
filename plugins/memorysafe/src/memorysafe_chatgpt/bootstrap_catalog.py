@@ -10,7 +10,7 @@ starts behind it.
 from __future__ import annotations
 
 
-VERSION = "0.4.15"
+VERSION = "0.4.16"
 PROTOCOL_VERSION = "2024-11-05"
 
 SERVER_INSTRUCTIONS = (
