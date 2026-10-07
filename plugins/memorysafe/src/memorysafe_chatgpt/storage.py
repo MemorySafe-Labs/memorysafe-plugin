@@ -1908,7 +1908,7 @@ class MemoryStore:
                 "average_memory_tokens": round(active_memory_tokens / total) if total else 0,
                 "counted_memories": total,
                 "chatgpt_live_usage_available": False,
-                "note": f"{tokenization['note']} These are not ChatGPT billed-token totals.",
+                "note": f"{tokenization['note']} These are not anyone's billed-token totals.",
             },
             "token_benchmark": token_benchmark(
                 live_average or AVERAGE_FACT_TOKENS,
