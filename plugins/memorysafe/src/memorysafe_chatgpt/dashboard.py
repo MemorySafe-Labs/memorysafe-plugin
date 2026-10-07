@@ -263,6 +263,14 @@ def dashboard_html(local_api_token: str | None = None) -> str:
       .token-grid { grid-template-columns: 1fr; }
     }
         [hidden] { display: none !important; }
+      .gov-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+      .gov-action { border: 1px solid rgba(190,218,245,.28); background: transparent; color: var(--text); font: 600 14px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 7px 13px; border-radius: 9px; cursor: pointer; }
+      .gov-action:hover { border-color: var(--cyan); color: var(--cyan); }
+      .gov-action.confirm { color: var(--bg); background: var(--cyan); border-color: var(--cyan); }
+      .gov-action:disabled { opacity: .5; cursor: default; }
+      .gov-action:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+      .gov-help { flex-basis: 100%; color: var(--muted); font-size: 14px; line-height: 1.4; min-height: 1.4em; }
+      .gov-error { flex-basis: 100%; color: var(--pink); font-size: 14px; }
       .fold-panel { margin-top: 10px; }
       .fold-panel > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
       .fold-panel > summary::-webkit-details-marker { display: none; }
@@ -454,6 +462,24 @@ def dashboard_html(local_api_token: str | None = None) -> str:
             return payload;
           });
         }
+        if (toolName === "memorysafe_resolve_conflict") {
+          return fetch("/api/conflicts/resolve", {
+            method: "POST",
+            cache: "no-store",
+            headers: {
+              "Content-Type": "application/json",
+              "X-MemorySafe-Setup-Token": localApiToken,
+            },
+            body: JSON.stringify({
+              conflict_id: Number(params?.arguments?.conflict_id),
+              action: String(params?.arguments?.action ?? ""),
+            }),
+          }).then(async (response) => {
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload?.error ?? "That decision could not be saved");
+            return payload;
+          });
+        }
         if (toolName === "memorysafe_support_bundle") {
           return fetch("/api/support-bundle", {
             method: "POST",
@@ -571,6 +597,72 @@ def dashboard_html(local_api_token: str | None = None) -> str:
       }
     }
 
+    // The three answers the page offers to an open conflict. "Restore" is left to the assistants: it
+    // puts the older fact back but leaves the question open, which is not an answer.
+    const CONFLICT_CHOICES = [
+      ["keep_both", "Keep both", "Both are true. Both stay in recall."],
+      ["supersede", "Newer replaces older", "The newer fact wins. The older one leaves recall but is kept, and can be brought back."],
+      ["revert", "Keep the older", "The newer update was wrong. It is rejected and the older fact comes back."],
+    ];
+
+    function conflictActions(conflictId) {
+      const box = document.createElement("div");
+      box.className = "gov-actions";
+      const help = document.createElement("div");
+      help.className = "gov-help";
+      help.textContent = "Decide this: pick one, then confirm.";
+      const buttons = [];
+      for (const [action, labelText, explanation] of CONFLICT_CHOICES) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "gov-action";
+        button.textContent = labelText;
+        button.setAttribute("aria-label", `${labelText}: ${explanation}`);
+        let armed = false;
+        let timer = null;
+        const disarm = () => {
+          armed = false;
+          clearTimeout(timer);
+          button.classList.remove("confirm");
+          button.textContent = labelText;
+          help.textContent = "Decide this: pick one, then confirm.";
+        };
+        button.addEventListener("click", async () => {
+          // A decision changes what the assistants recall, so the first click only asks.
+          if (!armed) {
+            for (const other of buttons) if (other !== button) other.dispatchEvent(new Event("disarm"));
+            armed = true;
+            button.classList.add("confirm");
+            button.textContent = "Confirm";
+            help.textContent = explanation;
+            timer = setTimeout(disarm, 6000);
+            return;
+          }
+          clearTimeout(timer);
+          for (const each of buttons) each.disabled = true;
+          button.textContent = "\u2026";
+          try {
+            await request("tools/call", {
+              name: "memorysafe_resolve_conflict",
+              arguments: { conflict_id: conflictId, action, confirm: true },
+            });
+            byId("refresh").click();
+          } catch (error) {
+            for (const each of buttons) each.disabled = false;
+            disarm();
+            const note = document.createElement("div");
+            note.className = "gov-error";
+            note.textContent = String(error?.message ?? "That decision could not be saved.");
+            box.append(note);
+          }
+        });
+        button.addEventListener("disarm", disarm);
+        buttons.push(button);
+      }
+      box.append(...buttons, help);
+      return box;
+    }
+
     // The one view no other memory product can draw: what was replaced, by what,
     // and on what evidence -- with the reason in the user's own language.
     function renderGovernance(events) {
@@ -605,8 +697,12 @@ def dashboard_html(local_api_token: str | None = None) -> str:
 
       list.textContent = "";
       let shown = 0;
-      for (const event of rows) {
-        if (shown >= 5) break;
+      // What needs the person comes first and is never cut off by the cap on the rest.
+      const open = rows.filter((event) => event?.status === "open");
+      const ordered = [...open, ...rows.filter((event) => event?.status !== "open")];
+      const limit = Math.max(5, open.length);
+      for (const event of ordered) {
+        if (shown >= limit) break;
         const [cls, label] = tag(event.decision, event.status);
         const item = document.createElement("div");
         item.className = "gov-item";
@@ -648,6 +744,7 @@ def dashboard_html(local_api_token: str | None = None) -> str:
         line("NOW", event.kept, "gov-in");
 
         item.append(head, reason, pair);
+        if (event.status === "open" && Number.isInteger(event.conflict_id)) item.append(conflictActions(event.conflict_id));
         list.append(item);
         shown += 1;
       }

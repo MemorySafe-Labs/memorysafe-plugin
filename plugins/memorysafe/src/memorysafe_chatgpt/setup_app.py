@@ -224,6 +224,30 @@ def forget_memory(paths: SetupPaths, memory_id: str) -> dict[str, Any]:
     return MemoryStore(paths.database_path).forget(memory_id)
 
 
+# What the dashboard may decide. "restore" is left to the assistants: it puts the older fact back
+# but leaves the question open, which is not an answer a button on a list should give.
+CONFLICT_ACTIONS = ("supersede", "keep_both", "revert")
+
+
+def resolve_conflict_decision(paths: SetupPaths, conflict_id: int, action: str) -> dict[str, Any]:
+    """Decide one open conflict from the dashboard rather than a chat.
+
+    The dashboard listed conflicts as "needs a decision" with nothing to click, so the only ways
+    to answer were a chat or the command line. The page asks twice (arm, then confirm) before it
+    calls this, so this is the confirmation the store requires.
+    """
+    action = str(action).strip().lower()
+    if action not in CONFLICT_ACTIONS:
+        raise ValueError("Choose keep both, newer replaces older, or keep the older one.")
+    store = MemoryStore(paths.database_path)
+    # The store would let a decided conflict be decided again, which is right for an assistant that was
+    # asked to change its mind. From a page it would let a stale second tab silently flip an earlier
+    # decision, so the page may only answer a question that is still open.
+    if int(conflict_id) not in {item["conflict_id"] for item in store.review_conflicts()["conflicts"]}:
+        return {"resolved": False, "reason": "That conflict is no longer waiting for a decision. Refresh the page."}
+    return store.resolve_conflict(int(conflict_id), action, confirm=True)
+
+
 def set_automatic_mode(paths: SetupPaths, enabled: bool) -> None:
     MemoryStore(paths.database_path).set_automatic_mode(bool(enabled))
     consent = consent_payload(paths)
@@ -580,6 +604,25 @@ class SetupHandler(BaseHTTPRequestHandler):
                     self._json({"error": "A memory id is required."}, 400)
                     return
                 result = forget_memory(self.paths, memory_id)
+                self._json({"ok": True, "result": result, "dashboard": dashboard_payload(self.paths)})
+                return
+            elif path == "/api/conflicts/resolve":
+                raw_id = payload.get("conflict_id")
+                try:
+                    # JSON true is an int to Python, and an id beyond SQLite's range would crash the request.
+                    if isinstance(raw_id, bool) or not isinstance(raw_id, (int, str)):
+                        raise ValueError
+                    conflict_id = int(raw_id)
+                except (TypeError, ValueError):
+                    self._json({"error": "A conflict id is required."}, 400)
+                    return
+                if not 1 <= conflict_id <= 2**63 - 1 or str(payload.get("action", "")).strip().lower() not in CONFLICT_ACTIONS:
+                    self._json({"error": "Choose keep both, newer replaces older, or keep the older one."}, 400)
+                    return
+                result = resolve_conflict_decision(self.paths, conflict_id, str(payload.get("action", "")))
+                if not result.get("resolved"):
+                    self._json({"error": str(result.get("reason") or "That conflict could not be decided.")}, 409)
+                    return
                 self._json({"ok": True, "result": result, "dashboard": dashboard_payload(self.paths)})
                 return
             elif path == "/api/support-bundle":
