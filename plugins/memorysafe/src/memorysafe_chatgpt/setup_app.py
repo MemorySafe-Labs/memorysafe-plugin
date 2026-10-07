@@ -5,6 +5,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import subprocess
 import sys
 import threading
@@ -682,6 +683,26 @@ def chatgpt_tunnel_installed(home: Path | None = None) -> bool:
     return sys.platform == "darwin" and ((home or Path.home()) / _TUNNEL_AGENT).is_file()
 
 
+class DashboardServer(ThreadingHTTPServer):
+    """The dashboard's server, built so that a second copy cannot take the port.
+
+    The one-dashboard-per-computer rule rests on the second bind failing. On POSIX it does.
+    On Windows `SO_REUSEADDR`, which http.server turns on by default, lets a second socket
+    bind an address that is already bound, so two dashboards ran at once: duplicate
+    snapshots on every start and two assistant installers racing (reported on 0.4.10).
+    Windows has a socket option for exactly this, `SO_EXCLUSIVEADDRUSE`, and the reuse flag
+    has to be off for it to mean anything.
+    """
+
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self) -> None:
+        exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+        if os.name == "nt" and exclusive is not None:
+            self.socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        super().server_bind()
+
+
 def _auto_connect_on_start(paths: SetupPaths) -> threading.Thread:
     """Connect assistants installed since the user said yes, without holding up the dashboard.
 
@@ -724,7 +745,7 @@ def main() -> None:
     ensure_device_identity(SetupHandler.paths.state_dir)
     _snapshot_on_start(SetupHandler.paths)
     _warm_token_metrics()
-    with ThreadingHTTPServer((HOST, port), SetupHandler) as server:
+    with DashboardServer((HOST, port), SetupHandler) as server:
         # Bound, so this process is the one /api/status will answer from. The launcher
         # recorded the PID it spawned, which on Windows is a venv shim that re-execs the
         # real interpreter; the stale-dashboard check compares the record against the

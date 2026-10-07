@@ -42,6 +42,7 @@ rem The dashboard's port. During a first start the bootstrap proxy serves setup 
 set "SETUP_PORT=%MEMORYSAFE_SETUP_PORT%"
 if "%SETUP_PORT%"=="" set "SETUP_PORT=8765"
 
+call :stage_plugin
 call :write_cli_shim
 call :write_mcp_shim
 
@@ -103,6 +104,27 @@ if not "!ANY_PYTHON!"=="" (
 echo MemorySafe: no usable Python was found and uv could not provide one. See %INSTALL_LOG%>&2
 exit /b 1
 
+:stage_plugin
+rem The two shims below are run by processes outside the host: a terminal, Cursor, VS Code.
+rem When the host is a packaged Windows app (the Claude desktop app is MSIX), the folder it
+rem unpacks the extension into exists only inside that app's container, so a shim pointing
+rem there fails for everyone else with a bare ModuleNotFoundError (reported on 0.4.10).
+rem The data root is real for every process, so a copy of the plugin goes there, one folder
+rem per runtime key, and the shims point at the copy. Every start refreshes it, so it follows
+rem updates exactly as the shims do. If the copy cannot be made, the shims fall back to the
+rem host's own folder, which is what they did before.
+set "SHIM_PLUGIN_DIR=%PLUGIN_DIR%"
+set "STAGED_DIR=%DATA_ROOT%\staged-plugin\%RUNTIME_KEY%"
+rem A launcher that is already running from the copy has nothing to stage.
+if /i "%PLUGIN_DIR%"=="%STAGED_DIR%" exit /b 0
+robocopy "%PLUGIN_DIR%" "%STAGED_DIR%" /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XD .git __pycache__ 1>nul 2>nul
+rem robocopy exits 0-7 for success of one kind or another, 8 and up for failure.
+if errorlevel 8 exit /b 0
+set "SHIM_PLUGIN_DIR=%STAGED_DIR%"
+rem One copy per runtime key; the ones for keys that are gone only take space.
+for /d %%D in ("%DATA_ROOT%\staged-plugin\*") do if /i not "%%~fD"=="%STAGED_DIR%" rmdir /s /q "%%~fD" 2>nul
+exit /b 0
+
 :write_cli_shim
 rem The memorysafe command follows whichever plugin started last, so it always runs that
 rem plugin's code on the runtime built for its lock. It never edits a shell profile.
@@ -112,8 +134,9 @@ set "SHIM_TMP=%SHIM%.tmp"
 (
   echo @echo off
   echo rem Written by the MemorySafe launcher on every start. Edits are overwritten.
+  echo setlocal
   echo set "MEMORYSAFE_INSTALL_ROOT=%DATA_ROOT%"
-  echo set "PYTHONPATH=%PLUGIN_DIR%\src"
+  echo set "PYTHONPATH=%SHIM_PLUGIN_DIR%\src"
   echo set "TIKTOKEN_CACHE_DIR=%DATA_ROOT%\cache\tiktoken"
   echo if not exist "%RUNTIME_PYTHON%" ^(
   echo   echo MemorySafe is still finishing its one-time setup. Progress: http://127.0.0.1:%SETUP_PORT%/dashboard^>^&2
@@ -138,11 +161,12 @@ set "MCP_SHIM_TMP=%MCP_SHIM%.tmp"
 (
   echo @echo off
   echo rem Written by the MemorySafe launcher on every start. Edits are overwritten.
-  echo if not exist "%SCRIPT_DIR%start.cmd" ^(
+  echo setlocal
+  echo if not exist "%SHIM_PLUGIN_DIR%\scripts\start.cmd" ^(
   echo   echo MemorySafe: the plugin this shim points at is no longer installed. Start MemorySafe once from an assistant that has it, or install it again.^>^&2
   echo   exit /b 1
   echo ^)
-  echo "%SCRIPT_DIR%start.cmd" %%*
+  echo "%SHIM_PLUGIN_DIR%\scripts\start.cmd" %%*
 ) > "%MCP_SHIM_TMP%" 2>nul
 move /y "%MCP_SHIM_TMP%" "%MCP_SHIM%" 1>nul 2>nul
 exit /b 0

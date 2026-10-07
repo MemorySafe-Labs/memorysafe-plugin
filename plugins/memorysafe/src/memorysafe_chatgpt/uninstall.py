@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 from typing import Any, Mapping
 
-from . import agents
+from . import agents, legacy_autostart
 from .migrate import (
     PLUGIN_ID,
     claude_config,
@@ -194,7 +194,11 @@ def _file_items(home: Path, env: Mapping[str, str], platform: str, data_root: Pa
     if platform == "win32":
         roaming = Path(env.get("APPDATA") or home / "AppData" / "Roaming")
         start_menu = roaming / "Microsoft" / "Windows" / "Start Menu" / "Programs"
-        legacy = [path for path in (start_menu / "MemorySafe", start_menu / "Startup" / "MemorySafe Dashboard Service.lnk") if path.exists()]
+        # The 0.3.x installer wrote "MemorySafe Dashboard Service.cmd"; looking only for .lnk missed it.
+        legacy = [
+            *(path for path in (start_menu / "MemorySafe",) if path.exists()),
+            *legacy_autostart.find(home, env, platform),
+        ]
         if legacy:
             items.append(_item("files", "Start Menu", "shortcuts from a 0.3.x install", paths=legacy))
 

@@ -264,6 +264,13 @@ def _dashboard_version_check() -> dict[str, Any] | None:
         else "Restart the assistant that started it -- most likely an older Claude Desktop "
         "extension -- and the current one takes the port."
     )
+    # The usual reason an old dashboard keeps winning is a start-at-login item from a 0.3.x install:
+    # it starts before any assistant, so it takes the port first on every boot. Name it.
+    from . import legacy_autostart
+
+    autostart = legacy_autostart.find(Path.home(), os.environ, sys.platform)
+    if autostart:
+        remedy = legacy_autostart.remedy(autostart, sys.platform)
     return _check(
         "dashboard_version",
         "warning",
@@ -272,6 +279,7 @@ def _dashboard_version_check() -> dict[str, Any] | None:
         version=running["version"],
         expected=VERSION,
         stoppable=running["pid"] is not None,
+        old_autostart=[path.name for path in autostart],
     )
 
 

@@ -18,8 +18,11 @@ import json
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
+
+from . import legacy_autostart
 
 try:
     import tomllib
@@ -298,6 +301,8 @@ def find_legacy(home: Path, data_root: Path) -> dict[str, Any]:
         },
         "old_runtime": {"path": str(old_runtime), "bytes": _size(old_runtime)} if old_runtime.is_dir() else None,
         "launch_agents": sorted(path.name for path in agents.glob("ca.memorysafe.*.plist")) if agents.is_dir() else [],
+        # Start-at-login items that bring the old dashboard back and take its port first (see legacy_autostart).
+        "old_autostart": [str(path) for path in legacy_autostart.find(home, os.environ, sys.platform)],
     }
 
 

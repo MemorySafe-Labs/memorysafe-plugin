@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -258,6 +259,75 @@ def _open_the_window_in_the_background(host: str, port: int) -> None:
 
     threading.Thread(target=_open_dashboard_when_ready, args=(host, port), daemon=True).start()
 
+_START_LOCK_NAME = "dashboard-start.lock"
+# A launcher that dies holding the lock must not stop every later start for ever.
+_START_LOCK_STALE_SECONDS = 45.0
+# How long a dashboard that has just been spawned counts as "starting": the interpreter, the
+# imports and the bind take several seconds on a cold machine, and a launcher arriving in
+# that gap would otherwise see nothing answering and spawn a second copy.
+_STARTING_GRACE_SECONDS = 20.0
+
+
+@contextlib.contextmanager
+def _start_lock(state_dir: Path):
+    """Yield True if this launcher may start the dashboard, False if another is doing it now.
+
+    "Is it running? then start it" is check-then-act: two hosts launching in the same
+    second (Claude Desktop and a Claude Code session did) both saw nothing answering and
+    both spawned one, and the one whose record was overwritten could never be found again
+    (reported on Windows, 0.4.10). mkdir is atomic on every platform, the same pattern the
+    runtime build already uses, so exactly one launcher gets it.
+
+    A lock that cannot be made at all (a read-only state folder) must not become no
+    dashboard, so only "somebody else holds it" says no.
+    """
+
+    lock = state_dir / _START_LOCK_NAME
+    owned = False
+    made = False
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        for _ in range(2):
+            try:
+                os.mkdir(lock)
+                owned = made = True
+                break
+            except FileExistsError:
+                try:
+                    age = time.time() - lock.stat().st_mtime
+                except OSError:
+                    continue
+                if age < _START_LOCK_STALE_SECONDS:
+                    break
+                try:
+                    os.rmdir(lock)  # abandoned by a launcher that died; try once more
+                except OSError:
+                    break
+            except OSError:
+                owned = True
+                break
+        yield owned
+    finally:
+        if made:
+            try:
+                os.rmdir(lock)
+            except OSError:
+                pass
+
+
+def _started_recently(state_dir: Path) -> bool:
+    """Was a dashboard spawned moments ago and still alive, even if it has not bound the port yet?"""
+
+    record = _read_dashboard_record(state_dir)
+    if record is None:
+        return False
+    try:
+        age = time.time() - (state_dir / _RECORD_NAME).stat().st_mtime
+    except OSError:
+        return False
+    return age < _STARTING_GRACE_SECONDS and _process_alive(record["pid"])
+
+
 def _start_dashboard() -> None:
     host = "127.0.0.1"
     port = int(os.environ.get("MEMORYSAFE_SETUP_PORT", "8765"))
@@ -271,9 +341,18 @@ def _start_dashboard() -> None:
     # Read before a record is written for the dashboard started below, which would
     # otherwise make every start look like one that had come before.
     first_start = _is_a_first_start(state_dir)
-    if _dashboard_is_running(host, port) and not _replace_stale_dashboard(host, port, state_dir):
-        return
+    with _start_lock(state_dir) as owned:
+        if not owned:
+            return  # another launcher is starting it right now
+        running = _dashboard_is_running(host, port)
+        if not running and _started_recently(state_dir):
+            return  # one was spawned moments ago and has not bound the port yet
+        if running and not _replace_stale_dashboard(host, port, state_dir):
+            return
+        _spawn_dashboard(host, port, state_dir, first_start)
 
+
+def _spawn_dashboard(host: str, port: int, state_dir: Path, first_start: bool) -> None:
     log_dir = state_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = (log_dir / "claude-dashboard.log").open("ab")
