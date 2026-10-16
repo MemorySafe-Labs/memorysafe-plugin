@@ -170,8 +170,33 @@ def _open_dashboard_when_ready(host: str, port: int) -> None:
         time.sleep(0.25)
 
 
+def _version_key(version: str) -> tuple[int, ...] | None:
+    """"0.4.19" -> (0, 4, 19). None for anything that is not dotted integers."""
+
+    try:
+        return tuple(int(part) for part in version.split("."))
+    except (AttributeError, ValueError):
+        return None
+
+
+def _is_older(running: str, ours: str) -> bool:
+    """Is the dashboard on the port from an older release than this launcher?
+
+    "Different" is not enough. Claude Desktop, Claude Code and Codex each update on their
+    own schedule and all share this one dashboard, so after an update one of them can
+    still be a release behind. Replacing any version that differed let that one kill the
+    new dashboard and start its own: install 0.4.19 in Claude Desktop, and the next Claude
+    Code session put 0.4.18 back on the page. A version that cannot be read is left alone.
+    """
+
+    running_key, our_key = _version_key(running), _version_key(ours)
+    if running_key is None or our_key is None:
+        return False
+    return running_key < our_key
+
+
 def _replace_stale_dashboard(host: str, port: int, state_dir: Path) -> bool:
-    """Stop a dashboard this launcher started from an older plugin. True once the port is free.
+    """Stop a dashboard started from an older plugin than this one. True once the port is free.
 
     A plugin update deletes the folder that dashboard was started from, but the process
     keeps the port and serves stale code whose lazy imports now point at nothing. Only
@@ -192,7 +217,7 @@ def _replace_stale_dashboard(host: str, port: int, state_dir: Path) -> bool:
     if (
         running is None
         or running["pid"] != record["pid"]
-        or running["version"] == VERSION
+        or not _is_older(running["version"], VERSION)
         or running["version"] != record.get("version")
     ):
         return False
