@@ -220,8 +220,16 @@ def support_bundle_payload(paths: SetupPaths, description: str = "") -> dict[str
 
 
 def forget_memory(paths: SetupPaths, memory_id: str) -> dict[str, Any]:
-    """Remove one memory from active recall, from the dashboard rather than a chat."""
-    return MemoryStore(paths.database_path).forget(memory_id)
+    """Remove one memory from active recall, from the dashboard rather than a chat.
+
+    The page's Forget button only sends this after a second click on the same button, so the
+    person has already confirmed. Forgetting a protected memory needs that confirmation, and
+    this used to call forget() without passing it on: every protected memory -- most of them,
+    since protection is the default for decisions and preferences -- came back "needs
+    confirmation", the endpoint still answered ok, and the page refreshed with the memory
+    still there and no word of why (reported on 0.4.20).
+    """
+    return MemoryStore(paths.database_path).forget(memory_id, confirm=True)
 
 
 # What the dashboard may decide. "restore" is left to the assistants: it puts the older fact back
@@ -604,6 +612,10 @@ class SetupHandler(BaseHTTPRequestHandler):
                     self._json({"error": "A memory id is required."}, 400)
                     return
                 result = forget_memory(self.paths, memory_id)
+                if not result.get("forgotten"):
+                    # Say so, rather than answer ok and leave the page looking like nothing happened.
+                    self._json({"error": str(result.get("reason") or "That memory could not be forgotten.")}, 409)
+                    return
                 self._json({"ok": True, "result": result, "dashboard": dashboard_payload(self.paths)})
                 return
             elif path == "/api/conflicts/resolve":
