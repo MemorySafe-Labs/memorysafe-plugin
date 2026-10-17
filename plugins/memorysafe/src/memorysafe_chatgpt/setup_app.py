@@ -41,6 +41,23 @@ RUNTIME_KEY_PATTERN = re.compile(r"^sk-[A-Za-z0-9_\-]{27,}$")
 TUNNEL_ID_PATTERN = re.compile(r"^tunnel_[A-Za-z0-9]+$")
 
 
+def _legal_dir(root: Path) -> Path:
+    """Where the Terms and the Privacy Policy are read from.
+
+    MEMORYSAFE_LEGAL_DIR wins (the macOS installer sets it). Otherwise the install root's
+    legal/ folder, and failing that the one shipped beside this package: a plugin's data
+    root holds no documents, so /legal/privacy answered 404 on every plugin install.
+    """
+
+    explicit = os.environ.get("MEMORYSAFE_LEGAL_DIR")
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    installed = (root / "legal").expanduser().resolve()
+    if (installed / "MemorySafe_Beta_Privacy_Policy.md").is_file():
+        return installed
+    return Path(__file__).resolve().parents[2] / "legal"
+
+
 @dataclass(frozen=True)
 class SetupPaths:
     install_root: Path
@@ -73,7 +90,7 @@ class SetupPaths:
             health_url_file=Path(
                 os.environ.get("MEMORYSAFE_HEALTH_URL_FILE", state / "health" / "tunnel.url")
             ).expanduser().resolve(),
-            legal_dir=Path(os.environ.get("MEMORYSAFE_LEGAL_DIR", root / "legal")).expanduser().resolve(),
+            legal_dir=_legal_dir(root),
             connect_url=os.environ.get("MEMORYSAFE_CONNECT_URL", DEFAULT_CONNECT_URL),
         )
 
@@ -158,6 +175,13 @@ def dashboard_payload(paths: SetupPaths) -> dict[str, Any]:
     payload = store.health()
     payload["status"] = "healthy"
     payload["recent_memories"] = store.recent(6)
+    # The dashboard is the page people open; the agreement step is on Setup. A changed
+    # policy was announced only there, and the version only in /api/status, so a tester
+    # on the dashboard saw neither (tester report, 17 Oct 2026).
+    consent = consent_payload(paths)
+    payload["version"] = VERSION
+    payload["terms_update_pending"] = bool(consent.get("terms_accepted")) and not accepted_the_current_documents(consent)
+    payload["legal_change_note"] = LEGAL_CHANGE_NOTE
     return payload
 
 

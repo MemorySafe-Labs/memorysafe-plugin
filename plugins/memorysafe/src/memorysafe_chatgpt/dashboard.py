@@ -237,6 +237,8 @@ def dashboard_html(local_api_token: str | None = None) -> str:
     .formula { margin-top: 10px; padding: 10px 12px; display: flex; gap: 9px; align-items: flex-start; border: 1px solid rgba(244,183,94,.11); border-radius: 10px; background: rgba(244,183,94,.035); color: #9b8a72; font-size: 14px; }
     .formula strong { flex: 0 0 auto; color: var(--amber); }
     .error { margin-top: 12px; padding: 10px 12px; border-radius: 9px; background: rgba(255,76,133,.07); color: #f1a3bb; display: none; }
+    .notice { margin-top: 12px; padding: 10px 12px; border-radius: 9px; background: rgba(25,228,233,.07); color: var(--text); display: none; font-size: 16px; }
+    .notice a { color: var(--cyan); }
     @media (max-width: 620px) {
       .shell { padding: 12px; }
       .topline { flex-wrap: wrap; }
@@ -291,7 +293,7 @@ def dashboard_html(local_api_token: str | None = None) -> str:
     <header class="topline">
       <div class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
       <div class="brand"><strong>MemorySafe</strong><span>Private local memory governance</span></div>
-      <div class="live">LOCAL · PRIVATE</div>
+      <div class="live" id="live-label">LOCAL · PRIVATE</div>
       <a class="setup-link" id="setup-link" href="/">Setup</a>
       <button class="support-bundle" id="support-bundle" type="button">Report a problem</button>
       <button class="refresh" id="refresh" type="button">Refresh</button>
@@ -403,6 +405,7 @@ def dashboard_html(local_api_token: str | None = None) -> str:
       <p class="store-path">Reading <code id="database-path">—</code></p>
     </details>
     <div class="error" id="error">The dashboard could not refresh. Your stored memories were not changed.</div>
+    <div class="notice" id="terms-notice" role="status"></div>
   </main>
 
   <script>
@@ -767,6 +770,20 @@ def dashboard_html(local_api_token: str | None = None) -> str:
       setText("recall-unused", number(recall.memories_never_recalled));
       setText("active", stored);
       setText("protected-note", `${number(data.protected_memories)} protected`);
+      if (data.version) setText("live-label", `LOCAL · PRIVATE · ${String(data.version)}`);
+      const termsNotice = byId("terms-notice");
+      if (termsNotice) {
+        if (data.terms_update_pending) {
+          termsNotice.textContent = `${String(data.legal_change_note ?? "The Beta Terms or Privacy Policy changed.")} Nothing has stopped working. `;
+          const review = document.createElement("a");
+          review.href = "/";
+          review.textContent = "Read it and accept it in Setup";
+          termsNotice.appendChild(review);
+          termsNotice.style.display = "block";
+        } else {
+          termsNotice.style.display = "none";
+        }
+      }
 
       const compare = tokenBenchmark.live_compare ?? {};
       const withoutTokens = number(compare.without_memorysafe_tokens);

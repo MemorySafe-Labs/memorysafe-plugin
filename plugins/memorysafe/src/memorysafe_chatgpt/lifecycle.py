@@ -379,11 +379,45 @@ _INSTALLATION_SCOPE = re.compile(
 )
 
 
+# "<machine> runs <product> <version>": the machine is the sentence's subject. Only the
+# "installed on <machine>" form was recognised, so "Testbox-77 runs MemorySafe 0.4.21"
+# then "... 0.4.22" opened a review (tester report, 17 Oct 2026).
+_MACHINE_RUNS = re.compile(r"^(?P<machine>.+?)\s+(?:now\s+)?(?:runs|is running|has)\s+", re.IGNORECASE)
+
+
+def _named_machine(content: str) -> str | None:
+    scope = _INSTALLATION_SCOPE.search(content)
+    if scope:
+        return _strip_fillers(_norm_slot(scope.group(1)))
+    runs = _MACHINE_RUNS.search(" ".join(content.split()))
+    if runs and not re.search(r"\d+\.\d+", runs.group("machine")):
+        return _strip_fillers(_norm_slot(runs.group("machine")))
+    return None
+
+
+_VERSION_TEXT = re.compile(r"\bv?\d+\.\d+(?:\.\d+)*\b|\b(?:version|release)\b", re.IGNORECASE)
+_INSTALL_WORDS = frozenset("runs running run is was has have installed install now currently".split())
+
+
+def _same_product(new_content: str, old_content: str) -> bool:
+    """The words naming what is installed, before its version, share a term:
+    "Testbox-77 runs MemorySafe 0.4.21" and "... runs Postgres 17.1.0" are two programs."""
+    content_terms, _, _ = _text()
+
+    def product(content: str) -> set[str]:
+        head = _VERSION_TEXT.split(content, maxsplit=1)[0]
+        machine = _named_machine(content) or ""
+        terms = content_terms(head) - content_terms(machine)
+        return {t for t in terms if t not in _INSTALL_WORDS}
+
+    new, old = product(new_content), product(old_content)
+    return bool(new & old)
+
+
 def _same_named_installation(new_content: str, old_content: str) -> bool:
     """Both name where they are installed, and it is the same place. Unnamed is not the same."""
-    new = _INSTALLATION_SCOPE.search(new_content)
-    old = _INSTALLATION_SCOPE.search(old_content)
-    return bool(new and old and _norm_slot(new.group(1)) == _norm_slot(old.group(1)))
+    new, old = _named_machine(new_content), _named_machine(old_content)
+    return bool(new and old and new == old)
 
 
 def _different_installations(new_content: str, old_content: str) -> bool:
@@ -414,7 +448,9 @@ def merge_compatible(new_content: str, old_content: str) -> bool:
     def wording(text):
         # Spaces dropped: a hyphen or a joined word is formatting too ("e-mails" is
         # "e mails" once normalised, and "followup" is "follow-up").
-        return re.sub(r"\bevery single\b", "every", normalize(text)).replace(" ", "")
+        from . import storage as _storage
+
+        return _storage._spelling_key(re.sub(r"\bevery single\b", "every", normalize(text)))
     return wording(new_content) == wording(old_content)
 
 
@@ -548,18 +584,55 @@ def _distinctive_terms(content: str) -> frozenset[str]:
 _PRESENT_TENSE = re.compile(r"\b(?:currently|these days|nowadays)\b", re.IGNORECASE)
 
 
-def _same_preference_topic(value: str, old_value: str) -> bool:
-    """Do two preference values name the same thing? English puts the thing last:
-    "dark mode" and "light mode" are both about the mode; "short emails" and "short
-    calls" are about two things. Compared on the last content word, lightly stemmed."""
+_PHRASE_BREAK = frozenset(
+    "in on for at of with during when while than to from over instead and or but because".split()
+)
+
+
+def _preference_head(value: str) -> str | None:
+    """The thing a preference is about: the last content word before the first
+    preposition or connector. "light mode in editors instead of dark mode" -> mode,
+    "dark mode in editors" -> mode, "green tea in the morning" -> tea. Taking the last
+    word of the whole value read "editors" against "mode" and "morning" against "tea"."""
     content_terms, normalize, _ = _text()
+    words: list[str] = []
+    for word in normalize(value).split():
+        if word in _PHRASE_BREAK and words:
+            break
+        words.append(word)
+    content = [w for w in words if content_terms(w)]
+    return next(iter(content_terms(content[-1])), None) if content else None
 
-    def head(text: str) -> str | None:
-        words = [w for w in normalize(text).split() if content_terms(w)]
-        return next(iter(content_terms(words[-1])), None) if words else None
 
-    new_head, old_head = head(value), head(old_value)
+def _same_preference_topic(value: str, old_value: str) -> bool:
+    """Do two preference values name the same thing? "dark mode" and "light mode" are
+    both about the mode; "short emails" and "short calls" are about two things."""
+    new_head, old_head = _preference_head(value), _preference_head(old_value)
     return bool(new_head) and new_head == old_head
+
+
+# "... instead of dark mode" names what is being replaced, not more of the new preference.
+_REPLACED_CLAUSE = re.compile(r"\b(?:instead of|rather than|in place of|over)\b", re.IGNORECASE)
+
+
+def _names_the_old(value: str, old_value: str) -> bool:
+    """The new preference says what it replaces: "coffee over tea", "light mode instead
+    of dark mode". True when that clause names the old preference's topic."""
+    content_terms, _, _ = _text()
+    parts = _REPLACED_CLAUSE.split(value, maxsplit=1)
+    old_head = _preference_head(_REPLACED_CLAUSE.split(old_value, maxsplit=1)[0])
+    return len(parts) == 2 and bool(old_head) and old_head in content_terms(parts[1])
+
+
+def _adds_detail(value: str, old_value: str) -> bool:
+    """One preference only adds words to the other ("dark mode" -> "dark mode in
+    editors"): the same preference, not a change. Similarity was the test, and it called
+    "dark mode in editors" and "light mode in editors" an elaboration (score >= 0.62),
+    so a plain change of mode never replaced anything."""
+    content_terms, _, _ = _text()
+    new_terms = content_terms(_REPLACED_CLAUSE.split(value, maxsplit=1)[0])
+    old_terms = content_terms(_REPLACED_CLAUSE.split(old_value, maxsplit=1)[0])
+    return bool(new_terms and old_terms) and (new_terms <= old_terms or old_terms <= new_terms)
 
 
 def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
@@ -594,6 +667,19 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
         return cached[0]
 
     replacement = bool(_REPLACEMENT_LANGUAGE.search(new_content))
+    new_versions = extract_values(new_content)[0].get("version", frozenset())
+    old_versions_named = extract_values(old_content)[0].get("version", frozenset())
+    if (new_versions and old_versions_named and not (new_versions & old_versions_named)
+            and _same_named_installation(new_content, old_content)
+            and _same_product(new_content, old_content)):
+        # The same named machine at a different version is an upgrade, however the rest
+        # is worded: "Testbox-77 now runs it 0.4.22 on the same computer" went to review.
+        return {
+            "action": "contradict",
+            "reason": "A newer note names a different version installed on the same machine.",
+            "evidence": f"version: {_show(old_versions_named)} vs {_show(new_versions)}",
+            "confidence": 0.85,
+        }
     changed_value = _value_change(new_content, old_content, replacement)
     if changed_value is not None:
         return changed_value
@@ -609,6 +695,7 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
 
     conflicting: list[str] = []
     version_mismatch: list[str] = []
+    preference_changes: list[str] = []
     for kind, subject, value in new_slots:
         for old_kind, old_subject, old_value in old_slots:
             if kind != old_kind or value == old_value:
@@ -620,6 +707,21 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
                 if not subject or subject != old_subject:
                     continue
                 version_mismatch.append(f"version: '{old_value}' vs '{value}'")
+                continue
+            if kind == "prefers":
+                # A person lives in one city but has many preferences. 0.4.21 let every
+                # "prefers" sentence about a person supersede the last; 0.4.22 let change
+                # words alone ("now ... instead") supersede any preference, so "now prefers
+                # light mode in editors instead of dark mode" replaced "prefers green tea
+                # in the morning" and left dark mode active (tester report, 17 Oct 2026).
+                # Replace only the same topic with a different detail. Change words with
+                # no shared topic say *something* changed, not which preference: review.
+                if not subject or subject != old_subject or _adds_detail(value, old_value):
+                    continue
+                if _same_preference_topic(value, old_value) or _names_the_old(value, old_value):
+                    conflicting.append(f"{kind}: '{old_value}' vs '{value}'")
+                elif replacement or _PRESENT_TENSE.search(new_content):
+                    preference_changes.append(f"{kind}: '{old_value}' vs '{value}'")
                 continue
             if similarity_fn(value, old_value) >= 0.62:
                 # Elaboration of the same value, not a replacement.
@@ -637,18 +739,6 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
                 # "Dana lives in Montreal" says nothing about where Sam lives.
                 if not subject or subject != old_subject:
                     continue
-            elif kind == "prefers":
-                # A person lives in one city but has many preferences. Every "prefers"
-                # sentence about the same person superseded the last one: tea in the
-                # morning, then window seats, then dark mode, left only dark mode in
-                # recall (found 17 Oct 2026). Replace only on change language ("now",
-                # "instead", "switched to") or when both name the same thing with a
-                # different detail ("dark mode" -> "light mode"). Otherwise keep both:
-                # a stale preference is visible and can be forgotten, an erased one is not.
-                if not subject or subject != old_subject:
-                    continue
-                if not (replacement or _PRESENT_TENSE.search(new_content)) and not _same_preference_topic(value, old_value):
-                    continue
             elif not subject or subject != old_subject:
                 continue
             conflicting.append(
@@ -664,6 +754,14 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
             "confidence": 0.86,
         }
 
+    if preference_changes:
+        return {
+            "action": "review",
+            "reason": "This says a preference changed, but not which earlier preference it replaces.",
+            "evidence": "; ".join(preference_changes),
+            "confidence": 0.45,
+        }
+
     # Different qualifiers may be another installation. Only an explicit mention
     # of the replaced version can authorize this fallback; simple same-frame
     # upgrades were already handled by _value_change.
@@ -675,6 +773,14 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
             "reason": "A later fact names a different version of the same thing and says it replaces the old one.",
             "evidence": "; ".join(version_mismatch),
             "confidence": 0.9,
+        }
+
+    if version_mismatch and _same_named_installation(new_content, old_content):
+        return {
+            "action": "contradict",
+            "reason": "A newer note names a different version installed on the same machine.",
+            "evidence": "; ".join(version_mismatch),
+            "confidence": 0.85,
         }
 
     if version_mismatch:

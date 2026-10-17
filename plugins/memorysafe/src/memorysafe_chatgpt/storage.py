@@ -239,6 +239,33 @@ def _max_active() -> int | None:
     return value if value > 0 else None
 
 
+# British and American spellings of the same word. "favourite colour is teal" and
+# "favorite color is teal" were stored as two memories (tester report, 17 Oct 2026).
+# Only for deciding that two texts are the same memory: stored text and search are
+# untouched. Prefixes, so "colours" and "organisation" fold too; both sides fold alike.
+_UK_US = (
+    ("colour", "color"), ("favour", "favor"), ("flavour", "flavor"), ("behaviour", "behavior"),
+    ("honour", "honor"), ("neighbour", "neighbor"), ("labour", "labor"), ("humour", "humor"),
+    ("organis", "organiz"), ("realis", "realiz"), ("recognis", "recogniz"), ("prioritis", "prioritiz"),
+    ("centre", "center"), ("theatre", "theater"), ("licence", "license"), ("analys", "analyz"),
+    ("catalogue", "catalog"), ("programme", "program"), ("grey", "gray"), ("travell", "travel"),
+    ("cancell", "cancel"), ("modell", "model"), ("labell", "label"),
+)
+
+
+def _spelling_key(normalized: str) -> str:
+    """Normalised text with UK spellings folded to US and spaces removed, so a hyphen,
+    a joined word or a spelling variant does not make two memories of one fact."""
+    words = []
+    for word in normalized.split():
+        for uk, us in _UK_US:
+            if word.startswith(uk):
+                word = us + word[len(uk):]
+                break
+        words.append(word)
+    return "".join(words)
+
+
 def _similarity(left: str, right: str, minimum: float = 0.0) -> float:
     """Blended token/sequence similarity, in [0, 1].
 
@@ -250,7 +277,7 @@ def _similarity(left: str, right: str, minimum: float = 0.0) -> float:
     """
     if not left or not right:
         return 0.0
-    if left.replace(" ", "") == right.replace(" ", ""):
+    if _spelling_key(left) == _spelling_key(right):
         # The same letters in the same order, split differently: "e-mails" normalises to
         # "e mails" and scored 0.69 against "emails", so "prefers short e-mails." was not
         # merged with "prefers short emails" and went on to supersede it as a contradiction.

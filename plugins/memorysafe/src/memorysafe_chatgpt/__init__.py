@@ -1,4 +1,4 @@
 """MemorySafe private ChatGPT connector."""
 
-__version__ = "0.4.22"
+__version__ = "0.4.23"
 
