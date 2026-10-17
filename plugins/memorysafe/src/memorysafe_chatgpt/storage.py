@@ -250,6 +250,12 @@ def _similarity(left: str, right: str, minimum: float = 0.0) -> float:
     """
     if not left or not right:
         return 0.0
+    if left.replace(" ", "") == right.replace(" ", ""):
+        # The same letters in the same order, split differently: "e-mails" normalises to
+        # "e mails" and scored 0.69 against "emails", so "prefers short e-mails." was not
+        # merged with "prefers short emails" and went on to supersede it as a contradiction.
+        # Different numbers never merge (the caller checks them), so "item 1 2" is safe.
+        return 1.0
     left_tokens = set(left.split())
     right_tokens = set(right.split())
     union = left_tokens | right_tokens
@@ -1050,6 +1056,48 @@ class MemoryStore:
                 "review_note": flags.get(row["id"], {}).get("note"),
             }
             for score, row in scored[:limit]
+        ]
+
+    def recent(self, limit: int) -> list[dict[str, Any]]:
+        """The newest active memories, newest first, without counting as recall.
+
+        The dashboard's "Recent memories" and the health tool used find("", 6), which ranks
+        by protection and importance and records a recall. So the list labelled LATEST showed
+        the six most important memories, never the one just saved, and every dashboard load
+        or refresh -- and every health call -- counted as a search that used those six,
+        inflating "memory searches", "memories used" and "most used" (reported 17 Oct 2026).
+        """
+
+        with self._session() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM memories
+                WHERE state = 'active'
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT ?
+                """,
+                (max(0, int(limit)),),
+            ).fetchall()
+            open_relations = connection.execute(
+                "SELECT id, old_memory_id, new_memory_id FROM memory_relations WHERE status = 'open'"
+            ).fetchall()
+        scored = [(float(row["importance"]), row) for row in rows]
+        flags = self._conflict_flags(scored, limit, open_relations)
+        return [
+            {
+                "memory_id": row["id"],
+                "content": row["content"],
+                "category": row["category"],
+                "importance": float(row["importance"]),
+                "confidence": float(row["confidence"]),
+                "protected": bool(row["protected"]),
+                "match_score": round(score, 3),
+                "updated_at": row["updated_at"],
+                "needs_review": row["id"] in flags,
+                "open_conflict_ids": flags.get(row["id"], {}).get("ids", []),
+                "review_note": flags.get(row["id"], {}).get("note"),
+            }
+            for score, row in scored
         ]
 
     def _conflict_flags(

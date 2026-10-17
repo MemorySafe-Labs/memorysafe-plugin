@@ -1,7 +1,7 @@
 # MemorySafe Beta Privacy Policy
 
-**Effective date:** September 20, 2026  
-**Version:** 0.2 - Private Beta
+**Effective date:** October 17, 2026  
+**Version:** 0.3 - Private Beta
 
 This Privacy Policy explains how MemorySafe Labs Inc. ("MemorySafe Labs," "we," "us," or "our") handles personal information in connection with the MemorySafe private beta software, connector, dashboard, and support activities (the "Beta").
 
@@ -80,7 +80,7 @@ We do not use private-beta memory content for advertising or to build marketing 
 
 Automatic Mode is optional and off by default for a new installation. We request a separate affirmative action before it is enabled. Accepting the Terms of Use alone does not enable Automatic Mode.
 
-When enabled, Automatic Mode may store up to a small number of concise memory candidates from a user turn in a chat where MemorySafe is selected. It is designed not to store complete messages, assistant-generated text, inferred information, temporary remarks, or personal information about third parties.
+When enabled, Automatic Mode may store up to a small number of concise memory candidates from a user turn in a chat where MemorySafe is selected. The connected assistant is instructed to submit only durable facts you state, and not complete messages, assistant-generated text, inferred information, temporary remarks, or personal information about third parties. MemorySafe itself cannot reliably tell whether a fact is about another person, so it does not enforce that last instruction: a fact about a colleague, friend or family member that the assistant submits may be stored. You can review stored memories and forget any of them from the dashboard.
 
 Automatic Mode filters attempt to reject likely passwords and secrets, payment and government identifiers, contact details, precise addresses, and medical or health information. The filters are experimental and are not guaranteed to detect every sensitive item.
 

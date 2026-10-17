@@ -180,14 +180,13 @@ def reason_for(shape: str) -> str:
 def skip_reason(content: str, category: str, automatic_mode: bool) -> tuple[str, str] | None:
     """(shape, reason) when automatic capture must refuse, else None.
 
-    NOTE — one promise is not enforced here. The tool description says automatic
-    capture never stores third-party personal details, and no pattern can decide
-    that: "met Jean Tremblay, director at a bank, at Place Ville Marie" contains
-    no email, phone or card. A reviewer raised this and it is unresolved. Either a
-    subject policy rejects likely named third-person facts, or the description
-    narrows to what this module actually enforces. The product owner decides; until
-    then the promise is wider than the code, and this comment is the only honest
-    record of that.
+    Not enforced here: whether a fact is about another person. No pattern can decide
+    that -- "met Jean Tremblay, director at a bank, at Place Ville Marie" contains no
+    email, phone or card. A reviewer raised it, and the product owner chose to narrow the
+    promise rather than add a detector that would also skip useful facts about the
+    user's own colleagues and family. The assistant is still instructed not to submit
+    such facts, and the Privacy Policy (0.3) says plainly that this module does not
+    enforce it. If this module ever starts enforcing it, change the policy too.
     """
 
     if not automatic_mode:

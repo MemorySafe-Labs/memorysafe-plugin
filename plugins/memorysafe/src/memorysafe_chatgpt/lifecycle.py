@@ -172,6 +172,23 @@ def _norm_slot(text: str) -> str:
     return normalize(text.strip().rstrip("."))
 
 
+# Words that say when, not who or what. Left in, "Sam now prefers Rust instead" had the
+# subject "sam now" and the value "rust instead", so it never matched "Sam prefers
+# Python" and a plain change of preference only went to review ("Dana now lives in
+# Toronto" the same). Only stripped from the ends of a subject or value, never from the
+# middle, and "no longer" is left alone: a negation is a different finding.
+_TIME_FILLERS = frozenset("now currently instead actually presently nowadays".split())
+
+
+def _strip_fillers(text_n: str) -> str:
+    words = text_n.split()
+    while words and words[0] in _TIME_FILLERS:
+        words.pop(0)
+    while words and words[-1] in _TIME_FILLERS:
+        words.pop()
+    return " ".join(words)
+
+
 @lru_cache(maxsize=4096)
 def extract_slots(content: str) -> tuple[tuple[str, str, str], ...]:
     """Return (kind, subject, value) slots. Empty subject means the clause is generic."""
@@ -180,10 +197,10 @@ def extract_slots(content: str) -> tuple[tuple[str, str, str], ...]:
     slots: list[tuple[str, str, str]] = []
 
     def add(kind: str, subject: str, value: str) -> None:
-        value_n = _norm_slot(value)
+        value_n = _strip_fillers(_norm_slot(value))
         if not value_n:
             return
-        slots.append((kind, _norm_slot(subject), value_n))
+        slots.append((kind, _strip_fillers(_norm_slot(subject)), value_n))
 
     def add_raw(kind: str, subject: str, value: str) -> None:
         """Store the value exactly as written. Normalising a version number
@@ -362,6 +379,13 @@ _INSTALLATION_SCOPE = re.compile(
 )
 
 
+def _same_named_installation(new_content: str, old_content: str) -> bool:
+    """Both name where they are installed, and it is the same place. Unnamed is not the same."""
+    new = _INSTALLATION_SCOPE.search(new_content)
+    old = _INSTALLATION_SCOPE.search(old_content)
+    return bool(new and old and _norm_slot(new.group(1)) == _norm_slot(old.group(1)))
+
+
 def _different_installations(new_content: str, old_content: str) -> bool:
     new = _INSTALLATION_SCOPE.search(new_content)
     old = _INSTALLATION_SCOPE.search(old_content)
@@ -388,7 +412,9 @@ def merge_compatible(new_content: str, old_content: str) -> bool:
     if tuple(_NEGATION.findall(new_content.casefold())) != tuple(_NEGATION.findall(old_content.casefold())):
         return False
     def wording(text):
-        return re.sub(r"\bevery single\b", "every", normalize(text))
+        # Spaces dropped: a hyphen or a joined word is formatting too ("e-mails" is
+        # "e mails" once normalised, and "followup" is "follow-up").
+        return re.sub(r"\bevery single\b", "every", normalize(text)).replace(" ", "")
     return wording(new_content) == wording(old_content)
 
 
@@ -473,6 +499,13 @@ def _value_change(new_content: str, old_content: str, change_language: bool) -> 
         return {"action": "review", "reason": "Changed values have different subject qualifiers.",
                 "evidence": "; ".join(changed), "confidence": 0.4}
     if "version" in new_values and "version" in old_values and not change_language:
+        if _same_named_installation(new_content, old_content):
+            # Both name the same place: a new version there is an upgrade, not a second
+            # installation. "0.3.5 was installed on Dana's iMac" opened a review against
+            # every later "... installed on Dana's iMac" note and never closed itself.
+            return {"action": "contradict",
+                    "reason": "A newer note names a different version installed on the same machine.",
+                    "evidence": "; ".join(changed), "confidence": 0.85}
         return {"action": "review", "reason": "Versions may describe separate installations.",
                 "evidence": "; ".join(changed), "confidence": 0.5}
     if any(item.startswith("date:") for item in changed) and not change_language:
@@ -508,6 +541,25 @@ def _show(values: frozenset) -> str:
 def _distinctive_terms(content: str) -> frozenset[str]:
     content_terms, _, _ = _text()
     return frozenset(term for term in content_terms(content) if term not in _GENERIC_SUBJECTS)
+
+
+# "Currently prefers" says this is the preference now, which is a change for a
+# preference only. Kept out of _REPLACEMENT_LANGUAGE, which every kind of fact reads.
+_PRESENT_TENSE = re.compile(r"\b(?:currently|these days|nowadays)\b", re.IGNORECASE)
+
+
+def _same_preference_topic(value: str, old_value: str) -> bool:
+    """Do two preference values name the same thing? English puts the thing last:
+    "dark mode" and "light mode" are both about the mode; "short emails" and "short
+    calls" are about two things. Compared on the last content word, lightly stemmed."""
+    content_terms, normalize, _ = _text()
+
+    def head(text: str) -> str | None:
+        words = [w for w in normalize(text).split() if content_terms(w)]
+        return next(iter(content_terms(words[-1])), None) if words else None
+
+    new_head, old_head = head(value), head(old_value)
+    return bool(new_head) and new_head == old_head
 
 
 def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
@@ -584,6 +636,18 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
             elif kind == "lives_in":
                 # "Dana lives in Montreal" says nothing about where Sam lives.
                 if not subject or subject != old_subject:
+                    continue
+            elif kind == "prefers":
+                # A person lives in one city but has many preferences. Every "prefers"
+                # sentence about the same person superseded the last one: tea in the
+                # morning, then window seats, then dark mode, left only dark mode in
+                # recall (found 17 Oct 2026). Replace only on change language ("now",
+                # "instead", "switched to") or when both name the same thing with a
+                # different detail ("dark mode" -> "light mode"). Otherwise keep both:
+                # a stale preference is visible and can be forgotten, an erased one is not.
+                if not subject or subject != old_subject:
+                    continue
+                if not (replacement or _PRESENT_TENSE.search(new_content)) and not _same_preference_topic(value, old_value):
                     continue
             elif not subject or subject != old_subject:
                 continue

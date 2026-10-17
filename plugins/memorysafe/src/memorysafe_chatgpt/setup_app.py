@@ -147,6 +147,7 @@ def status_payload(paths: SetupPaths) -> dict[str, Any]:
         and not accepted_the_current_documents(consent),
         "accepted_terms_version": consent.get("terms_version") or "",
         "current_terms_version": TERMS_VERSION,
+        "legal_change_note": LEGAL_CHANGE_NOTE,
         "automatic_mode": store.automatic_mode_enabled(),
         "connect_url": paths.connect_url,
     }
@@ -156,7 +157,7 @@ def dashboard_payload(paths: SetupPaths) -> dict[str, Any]:
     store = MemoryStore(paths.database_path)
     payload = store.health()
     payload["status"] = "healthy"
-    payload["recent_memories"] = store.find("", 6)
+    payload["recent_memories"] = store.recent(6)
     return payload
 
 
@@ -309,7 +310,14 @@ def save_connection(paths: SetupPaths, runtime_key: str, tunnel_id: str) -> None
 # themselves, and test_legal_documents fails if they drift apart: a consent record
 # naming a version the user was never shown says nothing about what they agreed to.
 TERMS_VERSION = "0.2"
-PRIVACY_VERSION = "0.2"
+PRIVACY_VERSION = "0.3"
+# What the newest change says, shown when someone who accepted an earlier version is asked
+# again. It names the change itself: the banner used to describe the 0.2 change, which
+# would have been wrong the moment the Privacy Policy moved on its own.
+LEGAL_CHANGE_NOTE = (
+    "The Privacy Policy now says plainly that MemorySafe cannot tell when a fact is about "
+    "another person, so automatic mode may store one if your assistant submits it."
+)
 
 
 def accepted_the_current_documents(consent: Mapping[str, Any]) -> bool:
@@ -445,7 +453,7 @@ function fold(id,done){const el=byId(id);if(!el.dataset.open)el.classList.toggle
 for(const id of ['agreement-step','assistants-step']){byId(id).querySelector('h2').addEventListener('click',()=>{const el=byId(id);if(el.classList.contains('collapsed')){el.dataset.open='1';el.classList.remove('collapsed')}})}
 function showChatgpt(open){byId('chatgpt-steps').hidden=!open;byId('chatgpt-toggle').textContent=open?'Hide ChatGPT setup':'Show ChatGPT setup'}
 byId('chatgpt-toggle').addEventListener('click',()=>{byId('chatgpt-toggle').dataset.user='1';showChatgpt(byId('chatgpt-steps').hidden)});
-function render(s){byId('device-id').textContent=s.device_id;if(!consentDirty){byId('terms').checked=Boolean(s.terms_accepted);byId('automatic').checked=Boolean(s.automatic_mode)}syncAutomatic();if(!byId('tunnel-id').value&&s.tunnel_id)byId('tunnel-id').value=s.tunnel_id;byId('agreement-step').classList.toggle('done',Boolean(s.terms_accepted));fold('agreement-step',Boolean(s.terms_accepted)&&!s.terms_update_pending);if(!byId('chatgpt-toggle').dataset.user)showChatgpt(Boolean(s.runtime_key_saved||s.tunnel_configured||s.connector_online));const update=byId('terms-update');if(s.terms_update_pending){update.textContent=`The Beta Terms of Use and Privacy Policy changed. You accepted version ${s.accepted_terms_version||'an earlier version'}; version ${s.current_terms_version} says which assistants MemorySafe now works with and where your memories go. Please read them and accept again. Nothing has stopped working, and your memories are untouched.`;update.style.display='block'}else{update.style.display='none'}byId('connection-step').classList.toggle('done',Boolean(s.runtime_key_saved&&s.tunnel_configured));byId('chatgpt-step').classList.toggle('done',Boolean(s.connector_online));byId('key-note').textContent=s.runtime_key_saved?'A private runtime key is already saved. Leave the field empty to keep it.':'Paste the runtime key once; it will remain only on this Mac.';const online=byId('online-label');online.textContent=s.connector_online?'ONLINE · READY':'DESKTOP CONNECTOR OFFLINE';online.className=s.connector_online?'online':'offline';byId('connect-button').classList.toggle('disabled',!(s.terms_accepted&&s.runtime_key_saved&&s.tunnel_configured));}
+function render(s){byId('device-id').textContent=s.device_id;if(!consentDirty){byId('terms').checked=Boolean(s.terms_accepted);byId('automatic').checked=Boolean(s.automatic_mode)}syncAutomatic();if(!byId('tunnel-id').value&&s.tunnel_id)byId('tunnel-id').value=s.tunnel_id;byId('agreement-step').classList.toggle('done',Boolean(s.terms_accepted));fold('agreement-step',Boolean(s.terms_accepted)&&!s.terms_update_pending);if(!byId('chatgpt-toggle').dataset.user)showChatgpt(Boolean(s.runtime_key_saved||s.tunnel_configured||s.connector_online));const update=byId('terms-update');if(s.terms_update_pending){update.textContent=`The Beta Terms of Use or Privacy Policy changed since you accepted them. ${s.legal_change_note||''} Please read them and accept again. Nothing has stopped working, and your memories are untouched.`;update.style.display='block'}else{update.style.display='none'}byId('connection-step').classList.toggle('done',Boolean(s.runtime_key_saved&&s.tunnel_configured));byId('chatgpt-step').classList.toggle('done',Boolean(s.connector_online));byId('key-note').textContent=s.runtime_key_saved?'A private runtime key is already saved. Leave the field empty to keep it.':'Paste the runtime key once; it will remain only on this Mac.';const online=byId('online-label');online.textContent=s.connector_online?'ONLINE · READY':'DESKTOP CONNECTOR OFFLINE';online.className=s.connector_online?'online':'offline';byId('connect-button').classList.toggle('disabled',!(s.terms_accepted&&s.runtime_key_saved&&s.tunnel_configured));}
 async function refresh(){try{render(await api('/api/status'))}catch(e){byId('online-label').textContent='STATUS UNAVAILABLE'}}
 byId('terms').addEventListener('change',()=>{consentDirty=true});byId('automatic').addEventListener('change',()=>{consentDirty=true;syncAutomatic()});
 byId('save-consent').addEventListener('click',async()=>{byId('agreement-step').dataset.open='1';try{await api('/api/consent',{method:'POST',body:JSON.stringify({terms_accepted:byId('terms').checked,automatic_mode:byId('automatic').checked})});consentDirty=false;show('consent-message','Agreement saved on this computer.');await refresh()}catch(e){show('consent-message',e.message,true)}});

@@ -838,7 +838,7 @@ def _open_dashboard_window(url: str) -> str:
 def _dashboard_data(open_window: bool = False) -> DashboardResult:
     data = _store().health()
     data["status"] = "healthy"
-    data["recent_memories"] = _store().find("", 6)
+    data["recent_memories"] = _store().recent(6)
     data["dashboard_url"] = _dashboard_url()
     data["opened"] = _open_dashboard_window(data["dashboard_url"]) if open_window else None
     return DashboardResult.model_validate(data)
