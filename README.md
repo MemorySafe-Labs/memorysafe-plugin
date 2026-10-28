@@ -3,6 +3,8 @@
 Private, governed memory for Claude Code, Claude Desktop and Codex, kept in one SQLite
 file on your own computer. macOS, Linux and Windows.
 
+https://github.com/user-attachments/assets/b5128691-64db-48bb-b12c-c9a34d58fda5
+
 ![Install MemorySafe once: install it in one assistant, restart it and open the dashboard, then connect the rest from the dashboard.](https://raw.githubusercontent.com/MemorySafe-Labs/memorysafe-plugin/main/install-guide.png)
 
 ## Before you start
