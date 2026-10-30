@@ -147,15 +147,10 @@ fi
 # No Python at all. uv can provide one, but only by downloading it before the handshake,
 # so this one start may miss Codex's window. The download finishes, and the next start
 # is instant.
-# Each command gets /dev/null for stdin: the host's JSON-RPC messages are already waiting
-# on this process's stdin, and whatever these read, the proxy would never answer.
-# --no-bin keeps uv from linking python3.12 into ~/.local/bin, outside the MemorySafe folder.
-if UV=$(/bin/sh "$SCRIPT_DIR/ensure_uv" </dev/null 2>>"$INSTALL_LOG") \
-  && UV_PYTHON_INSTALL_DIR="$DATA_ROOT/python" UV_CACHE_DIR="$DATA_ROOT/cache/uv" \
-    UV_PYTHON_PREFERENCE=only-managed \
-    "$UV" python install --no-bin "$PYTHON_VERSION" </dev/null >>"$INSTALL_LOG" 2>&1 \
-  && MANAGED_PYTHON=$(UV_PYTHON_INSTALL_DIR="$DATA_ROOT/python" \
-    "$UV" python find --managed-python "$PYTHON_VERSION" </dev/null 2>>"$INSTALL_LOG"); then
+# It gets /dev/null for stdin: the host's JSON-RPC messages are already waiting on this
+# process's stdin, and whatever uv read, the proxy would never answer. provide_python
+# holds the uv calls, because Claude's plugin directory refuses a launcher that runs uv.
+if MANAGED_PYTHON=$(/bin/sh "$SCRIPT_DIR/provide_python" </dev/null 2>>"$INSTALL_LOG"); then
   exec "$MANAGED_PYTHON" "$SCRIPT_DIR/bootstrap_server.py"
 fi
 

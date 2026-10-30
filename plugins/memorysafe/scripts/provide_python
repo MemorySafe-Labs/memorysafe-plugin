@@ -1,0 +1,22 @@
+#!/bin/sh
+# Print the path of a uv-managed Python, installing it into the MemorySafe folder first.
+#
+# The launcher runs this only when the computer has no usable Python. It lives in its own
+# file because Claude's plugin directory refuses a launcher that runs uv itself, and sends
+# a script the launcher calls to a human reviewer instead.
+#
+# stdout carries only that path: everything uv says goes to stderr, which the launcher
+# writes to the install log. stdin is the launcher's /dev/null, so uv reads none of the
+# host's JSON-RPC messages. Exit codes: ensure_uv's, or uv's own when it fails.
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$SCRIPT_DIR/runtime.env"
+DATA_ROOT=${MEMORYSAFE_INSTALL_ROOT:?MEMORYSAFE_INSTALL_ROOT must be set}
+
+UV=$(/bin/sh "$SCRIPT_DIR/ensure_uv")
+# --no-bin keeps uv from linking python3.12 into ~/.local/bin, outside the MemorySafe folder.
+UV_PYTHON_INSTALL_DIR="$DATA_ROOT/python" UV_CACHE_DIR="$DATA_ROOT/cache/uv" \
+  UV_PYTHON_PREFERENCE=only-managed \
+  "$UV" python install --no-bin "$PYTHON_VERSION" >&2
+UV_PYTHON_INSTALL_DIR="$DATA_ROOT/python" "$UV" python find --managed-python "$PYTHON_VERSION"
