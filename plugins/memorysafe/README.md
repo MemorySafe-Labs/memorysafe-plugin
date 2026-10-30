@@ -1,14 +1,16 @@
-# MemorySafe 0.4.23
+# MemorySafe 0.4.24
 
 Private, governed memory for Claude Code, Claude Desktop and Codex, kept in one SQLite
 file on your own computer. macOS, Linux and Windows.
+
+https://github.com/user-attachments/assets/b5128691-64db-48bb-b12c-c9a34d58fda5
 
 ![Install MemorySafe once: install it in one assistant, restart it and open the dashboard, then connect the rest from the dashboard.](https://raw.githubusercontent.com/MemorySafe-Labs/memorysafe-plugin/main/install-guide.png)
 
 ## Before you start
 
 Whatever you install below: **restart the assistant afterwards.** Its first start then
-builds a private Python runtime — a minute or two, once. Within seconds,
+builds a private Python runtime. It takes a minute or two, and only happens once. Within seconds,
 <http://127.0.0.1:8765/dashboard> shows that setup's progress on this computer, and it turns
 into your dashboard when setup finishes. That page is how you know it worked.
 
@@ -48,6 +50,11 @@ last lines say how to add it to your PATH. Then:
     claude plugin install memorysafe@memorysafe
 
 Restart Claude Code, run `/mcp`, and confirm `memorysafe` is connected with twelve tools.
+
+The plugin adds a hook that Claude Code runs on this computer each time you send a message.
+It reads the message there, sends nothing anywhere and saves nothing. While automatic
+capture is off it stays silent; once you turn it on, it reminds Claude to offer the facts
+you just stated. It does not run on Windows.
 
 ## Claude Desktop
 

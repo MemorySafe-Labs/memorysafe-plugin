@@ -142,6 +142,10 @@ Deleting a local MemorySafe record does not delete copies retained in an assista
 
 We retain support and beta-feedback correspondence only as long as reasonably necessary for support, security, legal, and product-improvement purposes. Our target is deletion or anonymization within 24 months after the matter is closed, unless a longer period is required by law or reasonably necessary for a legal claim or security investigation.
 
+### 9.4 MemorySafe accounts (hosted service)
+
+If you use a MemorySafe account, your memories are stored by MemorySafe Labs on its servers instead of in a local database on your computer. You can permanently erase a single memory, or delete your whole account, on your MemorySafe account page; this deletes the data from the live service database immediately and is different from Forget. **Erased data may persist in our database backups and recovery logs for up to 30 days, after which it is gone.**
+
 ## 10. Security
 
 We use measures intended to protect the Beta, including local storage, a dashboard reachable only from the computer it runs on, access credentials, an authorized tunnel connection where one is used, limited tool actions, and Automatic Mode filters. However, no system is completely secure.

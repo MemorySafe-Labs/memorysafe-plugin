@@ -23,7 +23,7 @@ Category = Literal["preference", "personal", "project", "decision", "task", "saf
 
 
 class RememberResult(BaseModel):
-    decision: Literal["PROTECT", "STORE", "MERGE"]
+    decision: Literal["PROTECT", "STORE", "MERGE", "SKIP"]
     memory_id: str
     content: str
     category: str
@@ -533,14 +533,17 @@ def automatic_capture(
             )
             continue
         stored = _store().remember(clean_content, category, source="automatic")
+        # A SKIP changed nothing: the fact is already held in a memory this call may
+        # not change, so it is not counted or described as saved.
+        saved = stored["decision"] != "SKIP"
         results.append(
             AutomaticCaptureResult(
-                saved=True,
+                saved=saved,
                 decision=stored["decision"],
                 memory_id=stored["memory_id"],
                 content=stored["content"],
                 category=stored["category"],
-                reason=f"Saved automatically. {stored['reason']}",
+                reason=f"Saved automatically. {stored['reason']}" if saved else stored["reason"],
             )
         )
     return AutomaticCaptureBatch(

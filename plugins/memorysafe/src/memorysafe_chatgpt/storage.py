@@ -192,6 +192,13 @@ def _content_terms(text: str) -> set[str]:
 
 
 MERGE_THRESHOLD = 0.88
+# What remember() says when the fact is already held in a memory it may not change,
+# which only happens in a store several people share.
+SKIP_READ_ONLY_REASON = "already in your organization's memory"
+# A store shared between people can show a row to someone who may not change it, and
+# its database may drop such an update without an error, so the engine must refuse
+# rather than report a change that did not happen.
+READ_ONLY_REASON = "Nothing was changed: this memory is shared with you to read, not to change."
 
 _NUMBERISH = re.compile(r"\d")
 
@@ -643,6 +650,8 @@ class MemoryStore:
             ).fetchall()
             exact = next((row for row in exact_matches
                           if merge_compatible(clean_content, row["content"])), None)
+            if exact and not self._backend.writable(exact):
+                return self._skip_read_only(connection, exact, content_bytes, source)
             if exact:
                 must_protect = self._protection_rule(category, importance, anchored, routine=False)
                 protected = bool(exact["protected"] or must_protect)
@@ -710,6 +719,8 @@ class MemoryStore:
                 closest = connection.execute(
                     "SELECT * FROM memories WHERE id = ?", (closest[1],)
                 ).fetchone()
+                if not self._backend.writable(closest):
+                    return self._skip_read_only(connection, closest, content_bytes, source)
             routine = siblings >= ROUTINE_MIN_SIBLINGS and category not in {"decision", "safety"}
             if routine and derived:
                 importance = min(importance, 0.5)
@@ -860,6 +871,31 @@ class MemoryStore:
                 "memor{} evicted (restorable).".format("y was" if len(evicted) == 1 else "ies were")
             )
         return result
+
+    def _skip_read_only(
+        self, connection: Any, row: Any, content_bytes: int, source: str
+    ) -> dict[str, Any]:
+        """The incoming fact is already held, in a memory this call may not change.
+
+        A store several people share can show a writer a memory someone else curates.
+        Merging into it would be refused or silently dropped by the store, and a second
+        copy would repeat a fact everyone already reads, so the write is a SKIP: one
+        event against the matched memory, and no memory changed.
+        """
+
+        self._record_event(
+            connection, "SKIP", row["id"], SKIP_READ_ONLY_REASON, content_bytes, source
+        )
+        return {
+            "decision": "SKIP",
+            "memory_id": row["id"],
+            "content": row["content"],
+            "category": row["category"],
+            "importance": float(row["importance"]),
+            "confidence": float(row["confidence"]),
+            "protected": bool(row["protected"]),
+            "reason": SKIP_READ_ONLY_REASON,
+        }
 
     @staticmethod
     def _protection_rule(category: str, importance: float, anchored: bool, routine: bool) -> bool:
@@ -1093,6 +1129,11 @@ class MemoryStore:
         the six most important memories, never the one just saved, and every dashboard load
         or refresh -- and every health call -- counted as a search that used those six,
         inflating "memory searches", "memories used" and "most used" (reported 17 Oct 2026).
+
+        Timestamps are whole seconds, so memories saved within one second tied, and the tie
+        came back in storage order: oldest first. rowid breaks it -- SQLite's own, and an
+        identity column of that name on Postgres (pg_migrations/0005_memories_rowid.sql) --
+        both increasing with every insert.
         """
 
         with self._session() as connection:
@@ -1100,7 +1141,7 @@ class MemoryStore:
                 """
                 SELECT * FROM memories
                 WHERE state = 'active'
-                ORDER BY updated_at DESC, created_at DESC
+                ORDER BY updated_at DESC, created_at DESC, rowid DESC
                 LIMIT ?
                 """,
                 (max(0, int(limit)),),
@@ -1193,6 +1234,12 @@ class MemoryStore:
                     "forgotten": False,
                     "reason": "No memory with that ID was found.",
                 }
+            if not self._backend.writable(row):
+                return {
+                    "memory_id": memory_id,
+                    "forgotten": False,
+                    "reason": READ_ONLY_REASON,
+                }
             if row["state"] == "deleted":
                 return {
                     "memory_id": memory_id,
@@ -1262,7 +1309,15 @@ class MemoryStore:
             "conflict_id": None,
             "lifecycle_reason": None,
         }
-        verdict = consider_incoming(new_content, others)
+        # `others` holds three columns and the backend judges a whole row, so a
+        # contradicted row is read in full before it is asked about.
+        verdict = consider_incoming(
+            new_content,
+            others,
+            writable=lambda row: self._backend.writable(
+                connection.execute("SELECT * FROM memories WHERE id = ?", (row["id"],)).fetchone()
+            ),
+        )
         if verdict is None:
             return empty
         old = verdict["old"]
@@ -1277,6 +1332,18 @@ class MemoryStore:
             verdict["reason"] = (
                 f"{verdict['reason']} Not applied automatically: the new write has lower "
                 f"confidence ({new_confidence:.2f}) than the existing fact ({old_confidence:.2f})."
+            )
+        if verdict["action"] == "contradict" and not self._backend.may_replace(
+            connection.execute("SELECT * FROM memories WHERE id = ?", (old_id,)).fetchone(),
+            connection.execute("SELECT * FROM memories WHERE id = ?", (new_id,)).fetchone(),
+        ):
+            # Seen by different people: a private note retired a memory a whole team relied
+            # on, for a replacement none of them could see. A person decides instead.
+            verdict = dict(verdict)
+            verdict["action"] = "review"
+            verdict["reason"] = (
+                f"{verdict['reason']} Not applied automatically: these two memories are not "
+                "shared with the same people."
             )
         if verdict["action"] == "contradict":
             connection.execute(
@@ -1333,6 +1400,39 @@ class MemoryStore:
             "conflict_id": relation_id,
             "lifecycle_reason": verdict["reason"],
         }
+
+    def _may_resolve(
+        self, connection: Any, relation: Any, action: str, old_id: str, new_id: str
+    ) -> bool:
+        """May this call answer the conflict `relation` with `action`?
+
+        In a store several people share, a conflict, or a memory it names, can be visible
+        to someone who may not change it, or a memory it names not visible at all, and the
+        store drops such an update without an error. Answering anyway told a member "the
+        prior fact is back in active recall" when nothing had moved. So every answer needs
+        the conflict itself writable, both memories in view, and each memory this answer
+        would actually change writable: keep_both, restore and revert move only the rows
+        whose state they change, so dismissing one's own review of a memory one only reads
+        (keep_both on an active memory) still works. With every row writable, as in one
+        person's file, this is always true.
+        """
+
+        if not self._backend.writable(relation):
+            return False
+        old = connection.execute("SELECT * FROM memories WHERE id = ?", (old_id,)).fetchone()
+        new = connection.execute("SELECT * FROM memories WHERE id = ?", (new_id,)).fetchone()
+        if old is None or new is None:
+            return False
+        if action == "supersede":
+            changed = [old]
+        elif action == "keep_both":
+            changed = [m for m in (old, new) if m["state"] == "superseded"]
+        elif action == "revert":
+            changed = [old] if old["state"] != "active" else []
+            changed += [new] if new["state"] == "active" else []
+        else:  # restore
+            changed = [old] if old["state"] == "superseded" else []
+        return all(self._backend.writable(memory) for memory in changed)
 
     def _relations_for(self, memory_id: str) -> list[dict[str, Any]]:
         with self._session() as connection:
@@ -1455,6 +1555,8 @@ class MemoryStore:
                 return {"resolved": False, "reason": "No conflict with that ID was found."}
             old_id = str(row["old_memory_id"])
             new_id = str(row["new_memory_id"])
+            if not self._may_resolve(connection, row, action, old_id, new_id):
+                return {"resolved": False, "reason": READ_ONLY_REASON}
 
             def settle(decision: str, status: str) -> None:
                 connection.execute(
@@ -1595,7 +1697,7 @@ class MemoryStore:
         timestamp = _now()
         with self._session() as connection:
             row = connection.execute(
-                "SELECT id, protected, state FROM memories WHERE id = ?", (memory_id,)
+                "SELECT * FROM memories WHERE id = ?", (memory_id,)
             ).fetchone()
             if row is None:
                 return {
@@ -1603,6 +1705,13 @@ class MemoryStore:
                     "changed": False,
                     "protected": False,
                     "reason": "No memory with that ID was found.",
+                }
+            if not self._backend.writable(row):
+                return {
+                    "memory_id": memory_id,
+                    "changed": False,
+                    "protected": bool(row["protected"]),
+                    "reason": READ_ONLY_REASON,
                 }
             if bool(row["protected"]) == protected:
                 return {
@@ -1650,6 +1759,12 @@ class MemoryStore:
                     "restored": False,
                     "memory_id": memory_id,
                     "reason": "No memory with that ID was found.",
+                }
+            if not self._backend.writable(row):
+                return {
+                    "restored": False,
+                    "memory_id": memory_id,
+                    "reason": READ_ONLY_REASON,
                 }
             if row["state"] == "active":
                 return {

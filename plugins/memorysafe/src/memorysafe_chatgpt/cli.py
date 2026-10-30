@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from .doctor import create_support_bundle, run_doctor
@@ -320,6 +321,18 @@ def _write_utf8_whatever_the_console_is() -> None:
             pass
 
 
+def _print_import(result: dict) -> None:
+    print(f"Imported {result['total']} memories: {result['stored']} new, {result['merged']} merged with ones already here.")
+    if result["replaced_older"]:
+        print(f"  {result['replaced_older']} replaced an older memory (still restorable).")
+    if result["needs_review"]:
+        print(f"  {result['needs_review']} may conflict with another memory; see `memorysafe review-conflicts`.")
+    if result["protected"]:
+        print(f"  {result['protected']} kept the protection they had.")
+    for failure in result["failures"]:
+        print(f"  Memory {failure['position']} was not imported: {failure['reason']}")
+
+
 def main() -> None:
     _write_utf8_whatever_the_console_is()
     parser = argparse.ArgumentParser(
@@ -385,6 +398,18 @@ def main() -> None:
     resolve.add_argument("action", choices=("supersede", "keep_both", "restore", "revert"))
     resolve.add_argument("--confirm", action="store_true")
     resolve.add_argument("--json", action="store_true", dest="as_json")
+    # Moving memories to another computer or another MemorySafe store. Commands, not MCP
+    # tools: a one-off move should not cost tokens in every conversation.
+    export = subparsers.add_parser(
+        "export", help="Write your active memories to a JSON file (not forgotten ones). Changes nothing."
+    )
+    export.add_argument("--output", type=Path, help="File to write; it must not exist yet.")
+    export.add_argument("--json", action="store_true", dest="as_json")
+    importer = subparsers.add_parser(
+        "import", help="Add the memories from an export file; duplicates merge, conflicts are flagged."
+    )
+    importer.add_argument("file", type=Path)
+    importer.add_argument("--json", action="store_true", dest="as_json")
     migrate = subparsers.add_parser(
         "migrate",
         help="Remove the manual MemorySafe registrations the plugins replace. Changes nothing without --apply.",
@@ -510,6 +535,35 @@ def main() -> None:
             _print_conflicts(result)
         else:
             _print_action(result)
+        return
+
+    if args.command in {"export", "import"}:
+        from . import transfer
+        from .storage import MemoryStore
+
+        store = MemoryStore(_resolve_database(args.install_root))
+        if args.command == "export":
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            target = args.output or Path.home() / f"memorysafe-export-{stamp}.json"
+            try:
+                result = transfer.write_export(store, target)
+            except FileExistsError:
+                raise SystemExit(f"{target} already exists; choose another --output.")
+            if args.as_json:
+                print(json.dumps(result, indent=2, sort_keys=True))
+            else:
+                print(f"Exported {result['count']} active memories to {result['path']}")
+                print("The file holds your memory text in plain JSON, readable only by you. Delete it when you are done.")
+            return
+        try:
+            memories = transfer.read_export(args.file)
+        except (OSError, ValueError) as error:
+            raise SystemExit(f"Could not import {args.file}: {error}")
+        result = transfer.import_memories(store, memories)
+        if args.as_json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            _print_import(result)
         return
 
     if args.command == "explain":

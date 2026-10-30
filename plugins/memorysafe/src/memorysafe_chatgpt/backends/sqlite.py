@@ -11,6 +11,7 @@ import sqlite3
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 def _display_path(path: Path) -> str:
@@ -76,6 +77,14 @@ class SqliteBackend:
                 yield connection
         finally:
             connection.close()
+
+    def writable(self, row: Any) -> bool:
+        # One person's file: every row anyone can read here is theirs to change.
+        return True
+
+    def may_replace(self, old: Any, new: Any) -> bool:
+        # One person's file: every memory in it is seen by the same one person.
+        return True
 
     def initialize(self) -> None:
         with self.session() as connection:

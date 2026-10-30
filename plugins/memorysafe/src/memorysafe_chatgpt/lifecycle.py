@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 import re
-from typing import Any
+from typing import Any, Callable
 
 from .backends import insert_returning_id
 
@@ -836,8 +836,18 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
     }
 
 
-def consider_incoming(new_content: str, existing: list[Any]) -> dict[str, Any] | None:
-    """Pick at most one existing active memory to supersede or mark for review."""
+def consider_incoming(
+    new_content: str,
+    existing: list[Any],
+    writable: Callable[[Any], bool] | None = None,
+) -> dict[str, Any] | None:
+    """Pick at most one existing active memory to supersede or mark for review.
+
+    `writable(row)` says whether this call may change that row. A store several people
+    share can show a writer a memory someone else curates; superseding it would be
+    refused or silently dropped by the store, so a contradiction of it is only a
+    review, and competes as one. It is asked only about contradictions.
+    """
 
     contradict: dict[str, Any] | None = None
     review: dict[str, Any] | None = None
@@ -860,6 +870,12 @@ def consider_incoming(new_content: str, existing: list[Any]) -> dict[str, Any] |
             continue
         verdict = classify_pair(new_content, old_content)
         verdict["old"] = row
+        if verdict["action"] == "contradict" and writable is not None and not writable(row):
+            verdict["action"] = "review"
+            verdict["reason"] = (
+                f"{verdict['reason']} Not applied automatically: the existing memory is "
+                "shared with you to read, not to change."
+            )
         if verdict["action"] == "contradict":
             if contradict is None or verdict["confidence"] > contradict["confidence"]:
                 contradict = verdict

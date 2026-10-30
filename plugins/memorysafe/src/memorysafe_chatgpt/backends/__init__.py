@@ -36,6 +36,30 @@ class Backend(Protocol):
 
     def checkpoint(self) -> dict[str, int]: ...
 
+    def writable(self, row: Any) -> bool:
+        """May this call change `row`, a full memories or memory_relations row as SELECT *
+        returns it? (A conflict is a memory_relations row, and answering one changes it.)
+
+        A backend whose rows several people share can let a call read a row it may not
+        change: a memory someone else curates. The engine must then not merge into it,
+        supersede it or change it, because the store would refuse the change or drop it
+        silently, and the user would be told something happened that did not.
+        """
+        ...
+
+    def may_replace(self, old: Any, new: Any) -> bool:
+        """May `new` supersede `old` without a person deciding? Both are full memories rows.
+
+        Asked only about a clear contradiction the caller could otherwise apply. A backend
+        whose memories are seen by different people (one person's private memory beside one
+        a team shares) answers no when the two are not seen by the same people: a private
+        note would otherwise retire a memory others rely on, for a replacement they cannot
+        see, or a shared write would retire someone's private one. The contradiction is then
+        a review. A backend may also need to keep the review's record private; that is its
+        own business, since the engine never says where a row is filed.
+        """
+        ...
+
 
 def insert_returning_id(connection: Any, sql: str, params: Sequence[Any]) -> int:
     """Run an INSERT and return the new row's integer id, on either backend.
