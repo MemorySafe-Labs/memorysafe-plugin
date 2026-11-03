@@ -1,7 +1,8 @@
-# MemorySafe 0.4.25
+# MemorySafe 0.4.26
 
 Private, governed memory for Claude Code, Claude Desktop and Codex, kept in one SQLite
-file on your own computer. macOS, Linux and Windows.
+file on your own computer. macOS, Linux and Windows. Free, and open source under the
+Apache License 2.0.
 
 https://github.com/user-attachments/assets/b5128691-64db-48bb-b12c-c9a34d58fda5
 
@@ -89,6 +90,15 @@ one command at a fixed path, rewritten on every start so it follows updates:
 Give your client that path as the command to run, with no arguments. It needs MemorySafe
 installed in one of the three assistants above first, since it is that plugin's launcher
 the command reaches.
+
+## The same memory on every device: MemorySafe Hosted
+
+The plugin keeps your memory on one computer. MemorySafe Hosted gives Claude, ChatGPT,
+Codex, Cursor and the other assistants you use one shared memory on every device, hosted
+in Montréal. It is available now, and free while we keep improving it. Sign in at
+<https://memory.memorysafe.ca/>, then add <https://memory.memorysafe.ca/mcp> to each app;
+<https://memory.memorysafe.ca/connect> shows the steps for every one. If you can't get in
+yet, write to contact@memorysafe.ca for early access.
 
 ## First start
 
@@ -188,6 +198,14 @@ nothing without `--apply`:
 **Your memories stay** unless you add `--purge`, and a purge copies the database to your
 home folder first and prints where. Claude Desktop asks you to confirm what its extensions
 do, so removing its extension stays with you: **Settings → Extensions → MemorySafe**.
+
+## Licence
+
+The code in this repository is open source under the [Apache License 2.0](LICENSE), with
+the copyright and trademark notice in [NOTICE](NOTICE). The MemorySafe name and logo are
+not part of the grant. The beta programme and the builds we distribute are governed by the
+[Terms of Use](TERMS.md) and the [Privacy Policy](PRIVACY.md); MemorySafe Hosted has its own
+at <https://memory.memorysafe.ca/terms> and <https://memory.memorysafe.ca/privacy>.
 
 ## About the numbers
 

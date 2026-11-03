@@ -1,127 +1,202 @@
-# MemorySafe Beta Terms of Use
 
-**Effective date:** September 20, 2026  
-**Version:** 0.2 - Private Beta
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
 
-These Terms of Use ("Terms") are a legal agreement between you and MemorySafe Labs Inc. ("MemorySafe Labs," "we," "us," or "our") governing your access to and use of the MemorySafe private beta software, connector, dashboard, and related services (collectively, the "Beta").
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 
-By installing, connecting, accessing, or using the Beta, or by selecting an acceptance control presented with these Terms, you agree to these Terms. If you do not agree, do not use the Beta.
+   1. Definitions.
 
-## 1. About MemorySafe Labs
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
 
-MemorySafe Labs Inc. is a corporation incorporated under the Canada Business Corporations Act, federal corporation number 18085285, and registered in Quebec under enterprise number (NEQ) 1182359472.
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
 
-Contact: contact@memorysafe.ca
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
 
-## 2. Eligibility and beta participation
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
 
-You must be at least 18 years old and legally able to enter into this agreement. The Beta is invitation-only unless we state otherwise. You may use it only for your own lawful evaluation and in accordance with any testing instructions we provide.
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
 
-The Beta is experimental and may be incomplete, unavailable, inaccurate, or changed without notice. Features may fail, memories may not be captured or retrieved as expected, and stored information may be lost. Do not rely on the Beta as the only copy of important information.
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
 
-## 3. What the Beta does
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
 
-MemorySafe provides local memory-governance tools for compatible AI assistants. Depending on the version and settings available to you, the Beta may allow you to:
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
 
-- save concise facts, preferences, decisions, project details, and tasks;
-- search and retrieve stored memories;
-- remove a selected memory from active recall;
-- review memory-health information and recent memories in a dashboard;
-- enable or disable optional Automatic Mode; and
-- merge duplicate or near-duplicate memories.
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
 
-MemorySafe runs on your own computer and connects to compatible AI assistants through the Model Context Protocol. In this beta those are Claude Code, Claude Desktop, and Codex, and, on macOS only, ChatGPT through OpenAI's Secure MCP Tunnel. One local SQLite database serves all of them, so a memory saved in one assistant is available in the others on that computer.
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
 
-The Beta does not independently copy your conversation history and does not read an assistant's own built-in memory. For an assistant that runs on your computer, MemorySafe requests and responses travel between that assistant and the local connector on the same machine. ChatGPT is the exception: it reaches the connector through OpenAI's tunnel, so those requests and responses pass through OpenAI's systems.
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
 
-## 4. Automatic Mode is optional
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
 
-Automatic Mode is off by default for a new installation. It may be enabled only through a separate affirmative action. When enabled, it may save short, directly stated, durable, non-sensitive facts from chats in which MemorySafe is selected. It is designed not to save complete messages or conversations automatically.
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
 
-Automatic Mode uses filters intended to reject likely secrets, payment and government identifiers, contact details, precise addresses, and medical or health information. These filters are experimental and may not identify every sensitive item. You remain responsible for what you enter in a chat and for reviewing saved memories.
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
 
-You may disable Automatic Mode at any time. Disabling it stops new automatic captures but does not erase memories already stored.
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
 
-## 5. Your content and instructions
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
 
-You retain any rights you have in the content you provide. You give MemorySafe Labs a limited, non-exclusive permission to process that content only as necessary to operate, secure, support, and improve the Beta in accordance with the Privacy Policy and your instructions.
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
 
-The current private beta is designed so that memory content is stored on your device rather than in a central MemorySafe Labs database.
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
 
-Memory content still reaches the assistant you are using, because that is what asking it to save, find, display, or use a memory means. Whatever that assistant then includes in its own conversation is sent to and processed by its provider -- Anthropic for Claude Code and Claude Desktop, OpenAI for Codex and ChatGPT -- under your separate agreement with that provider, not under these Terms. For ChatGPT on macOS, the requests and responses themselves also pass through OpenAI's tunnel.
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
 
-You are responsible for the accuracy, lawfulness, and appropriateness of your content. Do not use the Beta to store passwords, authentication codes, API keys, payment card data, protected health information, information about another person without proper authority, or content that you do not have the right to process.
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
 
-## 6. Acceptable use
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
 
-You must not:
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
 
-- use the Beta illegally, fraudulently, deceptively, or to harm another person;
-- probe, attack, bypass, or interfere with the security or operation of the Beta, its connector, or related systems;
-- introduce malware or use the Beta to distribute malicious content;
-- attempt to access another user's memories or computer without authorization;
-- use the Beta to make high-impact decisions about another person in employment, housing, credit, insurance, health care, education, or legal services;
-- use the Beta as a substitute for qualified medical, legal, financial, safety, or other professional advice; or
-- violate the applicable terms, usage policies, or permissions of an assistant you connect MemorySafe to, or of its provider.
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
 
-## 7. Third-party services
+   END OF TERMS AND CONDITIONS
 
-The Beta depends on the assistants you connect it to and their providers, such as Anthropic or OpenAI, on your operating system, and, for ChatGPT on macOS, on an authorized tunnel service. Its first start also downloads uv, a Python build, and pinned packages from their distributors. These are third-party services governed by their own terms and privacy practices. MemorySafe Labs does not control and is not responsible for the availability, security, accuracy, or conduct of third-party services.
+   APPENDIX: How to apply the Apache License to your work.
 
-## 8. Privacy
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
 
-Our MemorySafe Beta Privacy Policy explains how information is handled. It forms part of these Terms. Automatic Mode consent is separate from acceptance of these Terms.
+   Copyright [yyyy] [name of copyright owner]
 
-## 9. Security and your responsibilities
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
 
-You are responsible for keeping your device, your accounts with the assistants you connect, API or runtime credentials, and local files secure. Do not share access keys in chats or support messages. The Beta does not currently add application-level encryption to the local MemorySafe database; protection depends in part on your device and operating-system security settings.
+       http://www.apache.org/licenses/LICENSE-2.0
 
-No system is completely secure. Notify us promptly at contact@memorysafe.ca if you believe the Beta or your MemorySafe data has been compromised.
-
-## 10. Feedback
-
-You may choose to provide feedback, bug reports, or suggestions. You grant us permission to use that feedback without restriction or compensation, provided that we do not publicly identify you without permission. Do not include memory content or sensitive personal information in a bug report unless it is necessary and you agree to provide it.
-
-## 11. Changes, suspension, and termination
-
-We may update, restrict, suspend, or discontinue the Beta at any time. We may suspend or terminate access if we reasonably believe you violated these Terms, created a security or legal risk, or used the Beta in a harmful manner.
-
-You may stop using the Beta at any time and disconnect it from the assistants you connected. The `memorysafe uninstall` command lists what is on the computer and removes it; it keeps your memories unless you pass `--purge`, and neither removes information retained by third-party services. See the Privacy Policy for deletion instructions.
-
-## 12. Disclaimers
-
-TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE BETA IS PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EXPRESS, IMPLIED, OR STATUTORY. MEMORYSAFE LABS DISCLAIMS IMPLIED WARRANTIES OR CONDITIONS OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, ACCURACY, AVAILABILITY, SECURITY, AND THAT DATA WILL NOT BE LOST.
-
-THE BETA DOES NOT PROVIDE MEDICAL, LEGAL, FINANCIAL, OR OTHER PROFESSIONAL ADVICE. AI-GENERATED OUTPUT AND MEMORY CLASSIFICATIONS MAY BE INCORRECT. YOU SHOULD REVIEW IMPORTANT INFORMATION AND USE INDEPENDENT JUDGMENT.
-
-Some jurisdictions do not allow certain disclaimers, so some of the above may not apply to you.
-
-## 13. Limitation of liability
-
-TO THE MAXIMUM EXTENT PERMITTED BY LAW, MEMORYSAFE LABS AND ITS DIRECTORS, OFFICERS, EMPLOYEES, CONTRACTORS, AND AFFILIATES WILL NOT BE LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR LOSS OF DATA, PROFITS, REVENUE, GOODWILL, OR BUSINESS OPPORTUNITY, ARISING FROM OR RELATED TO THE BETA.
-
-TO THE MAXIMUM EXTENT PERMITTED BY LAW, OUR TOTAL AGGREGATE LIABILITY ARISING FROM OR RELATED TO THE BETA WILL NOT EXCEED THE GREATER OF (A) CAD $100 OR (B) THE AMOUNT YOU PAID MEMORYSAFE LABS FOR THE BETA DURING THE 12 MONTHS BEFORE THE EVENT GIVING RISE TO THE CLAIM.
-
-Nothing in these Terms limits liability that cannot legally be limited or excludes rights you may have under mandatory consumer-protection law.
-
-## 14. Governing law and disputes
-
-These Terms are governed by the laws of Quebec and the federal laws of Canada applicable there, without regard to conflict-of-law principles. Subject to any mandatory consumer rights, the courts of Quebec will have exclusive jurisdiction over disputes relating to these Terms or the Beta.
-
-Before starting formal proceedings, you and MemorySafe Labs agree to attempt in good faith to resolve the dispute by written notice to contact@memorysafe.ca and a reasonable opportunity to respond.
-
-## 15. Changes to these Terms
-
-We may update these Terms as the Beta changes. We will identify the effective date and provide reasonable notice of material changes through the Beta, by email, or by another appropriate method. If you do not agree to updated Terms, you must stop using the Beta.
-
-## 16. General terms
-
-These Terms and the Privacy Policy are the entire agreement between you and MemorySafe Labs concerning the Beta. If a provision is unenforceable, it will be modified only to the extent necessary, and the remaining provisions will continue in effect. Our failure to enforce a provision is not a waiver. You may not transfer these Terms without our consent. We may transfer them as part of a reorganization, financing, merger, acquisition, or sale of the Beta, subject to applicable law.
-
-## 17. Contact
-
-MemorySafe Labs Inc.  
-Federal corporation number: 18085285  
-Quebec enterprise number (NEQ): 1182359472  
-Email: contact@memorysafe.ca
-
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.

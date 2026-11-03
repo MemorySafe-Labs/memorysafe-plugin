@@ -1,10 +1,23 @@
 {
   "name": "memorysafe",
-  "version": "0.4.25",
+  "displayName": "MemorySafe",
+  "version": "0.4.26",
   "description": "Private local memory governance for Claude.",
   "author": {
     "name": "MemorySafe Beta"
   },
   "homepage": "https://memorysafe.ca",
-  "keywords": ["memory", "privacy", "mcp", "claude", "productivity"]
+  "repository": "https://github.com/MemorySafe-Labs/memorysafe-plugin",
+  "documentationUrl": "https://github.com/MemorySafe-Labs/memorysafe-plugin#readme",
+  "supportUrl": "https://github.com/MemorySafe-Labs/memorysafe-plugin/issues",
+  "privacyPolicyUrl": "https://github.com/MemorySafe-Labs/memorysafe-plugin/blob/main/PRIVACY.md",
+  "termsOfServiceUrl": "https://github.com/MemorySafe-Labs/memorysafe-plugin/blob/main/LICENSE",
+  "icon": "./.claude-plugin/icon.png",
+  "keywords": [
+    "memory",
+    "privacy",
+    "mcp",
+    "claude",
+    "productivity"
+  ]
 }
