@@ -1,7 +1,7 @@
 {
   "name": "memorysafe",
   "owner": {
-    "name": "MemorySafe Beta"
+    "name": "MemorySafe Labs"
   },
   "metadata": {
     "description": "MemorySafe: one private, local memory for Claude Code and Codex."
@@ -11,7 +11,7 @@
       "name": "memorysafe",
       "source": "./plugins/memorysafe",
       "description": "Private, governed local memory shared by Claude Code, Claude Desktop and Codex.",
-      "version": "0.4.26"
+      "version": "0.4.27"
     }
   ]
 }

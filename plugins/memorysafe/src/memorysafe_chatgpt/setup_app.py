@@ -689,6 +689,34 @@ class SetupHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(data)
                 return
+            elif path == "/api/export":
+                # "Move to Hosted": the dashboard's button. The file holds the person's memory
+                # text in plain JSON (owner-readable only); the page fetches it from
+                # /api/export/download so the browser saves it to Downloads, then the person
+                # uploads it at memory.memorysafe.ca/account/import.
+                from . import transfer
+                from .storage import MemoryStore
+
+                store = MemoryStore(self.paths.database_path)
+                self._json({"ok": True, **transfer.write_dashboard_export(store, self.paths.state_dir)})
+                return
+            elif path == "/api/export/download":
+                from . import transfer
+
+                export = transfer.find_dashboard_export(self.paths.state_dir, str(payload.get("name", "")))
+                if export is None:
+                    self._json({"error": "That export was not found."}, 404)
+                    return
+                data = export.read_bytes()
+                export.unlink()  # one copy, in the person's Downloads, not two
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Content-Disposition", f'attachment; filename="{export.name}"')
+                self._security_headers()
+                self.end_headers()
+                self.wfile.write(data)
+                return
             elif path == "/api/agents/connect":
                 # Runs an assistant's own plugin installer. The token check above is what
                 # stops another website from triggering it: only this dashboard's page can

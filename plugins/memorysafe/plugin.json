@@ -1,10 +1,10 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "memorysafe",
-  "version": "0.4.26",
+  "version": "0.4.27",
   "description": "Private, governed local memory shared by Codex, Claude Code and Claude Desktop.",
   "author": {
-    "name": "MemorySafe Beta"
+    "name": "MemorySafe Labs"
   },
   "homepage": "https://memorysafe.ca",
   "license": "Proprietary beta",
@@ -15,7 +15,7 @@
         "displayName": "MemorySafe",
         "shortDescription": "Remember what matters, privately.",
         "longDescription": "MemorySafe gives Codex twelve governed memory tools: remember, find, forget, restore, protect, explain, review and resolve conflicts, health, diagnostics, and opt-in automatic capture. Memories stay in one SQLite file on this computer, shared with Claude Code and Claude Desktop.",
-        "developerName": "MemorySafe Beta",
+        "developerName": "MemorySafe Labs",
         "category": "Productivity",
         "capabilities": ["Interactive", "Read", "Write", "Local data"],
         "defaultPrompt": [

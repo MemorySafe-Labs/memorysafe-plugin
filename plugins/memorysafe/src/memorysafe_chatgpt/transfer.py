@@ -23,6 +23,7 @@ the owner's to keep or delete.
 from __future__ import annotations
 
 import json
+import re
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -76,6 +77,34 @@ def write_export(store: Any, path: Path) -> dict[str, Any]:
         json.dump(data, handle, ensure_ascii=False, indent=1)
         handle.write("\n")
     return {"path": str(path), "count": len(data["memories"])}
+
+
+EXPORT_NAME = re.compile(r"memorysafe-export-\d{8}-\d{6}\.json")
+
+
+def export_dir(state_dir: Path) -> Path:
+    """Where the dashboard's "Move to Hosted" writes its export before the browser saves it."""
+    return Path(state_dir) / "exports"
+
+
+def write_dashboard_export(store: Any, state_dir: Path) -> dict[str, Any]:
+    """An export under the install's own state folder, named by the time, for the dashboard to
+    hand to the browser (which puts it in Downloads, where people look)."""
+    from datetime import datetime
+
+    folder = export_dir(state_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+    name = f"memorysafe-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+    result = write_export(store, folder / name)
+    return {**result, "file_name": name}
+
+
+def find_dashboard_export(state_dir: Path, name: str) -> Path | None:
+    """The export called `name` in this install's exports folder, if it is one (no other path)."""
+    if not EXPORT_NAME.fullmatch(name):
+        return None
+    candidate = export_dir(state_dir) / name
+    return candidate if candidate.is_file() else None
 
 
 def read_export(path: Path) -> list[dict[str, Any]]:

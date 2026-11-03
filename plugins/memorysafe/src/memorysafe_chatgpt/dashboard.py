@@ -74,6 +74,8 @@ def dashboard_html(local_api_token: str | None = None) -> str:
     .support-result:empty { margin: 0; padding: 0; border: 0; }
     .support-result.bad { border-color: rgba(244,183,94,.3); background: rgba(244,183,94,.06); color: #f3d3a0; }
     .support-result a { color: var(--cyan); }
+    .hosted-text { margin: 0 0 10px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .hosted-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 0 0 10px; }
     .report-form { margin: 0 0 10px; padding: 11px 12px; border: 1px solid rgba(25,228,233,.35); border-radius: 9px; background: rgba(25,228,233,.06); }
     .report-form label { display: block; color: #dce5ed; font-size: 15px; font-weight: 700; }
     .report-form label span { display: block; margin-top: 3px; color: var(--dim); font-size: 14px; font-weight: 400; }
@@ -348,6 +350,15 @@ def dashboard_html(local_api_token: str | None = None) -> str:
       <p class="agents-missing" id="agents-missing" hidden></p>
       <p class="agents-auto" id="agents-auto" hidden>Assistants you install later connect automatically.<button class="agents-link" id="agents-auto-off" type="button">Turn off</button></p>
       <p class="agents-message" id="agents-message" hidden></p>
+    </section>
+    <section class="panel hosted-panel" id="hosted-panel" aria-label="Take your memory everywhere">
+      <div class="panel-title"><strong>Take your memory everywhere</strong><span>MEMORYSAFE HOSTED · FREE</span></div>
+      <p class="hosted-text">Hosted gives every assistant you use, on every device, this same memory. Export a copy here, then import it into your Hosted account; nothing leaves this computer until you upload the file yourself.</p>
+      <div class="hosted-actions">
+        <button class="agent-connect" id="hosted-export" type="button">Export my memories for Hosted</button>
+        <a class="agents-link" href="https://memory.memorysafe.ca/account/start?signup=1&amp;next=/account/import&amp;lang=en" target="_blank" rel="noopener">Create a free Hosted account</a>
+      </div>
+      <div class="support-result" id="hosted-result" role="status"></div>
     </section>
     <details class="panel token-panel fold-panel" aria-label="Tokens with and without MemorySafe">
       <summary><strong>With vs without MemorySafe</strong><span class="token-badge">THIS STORE · THIS TURN</span></summary>
@@ -1111,6 +1122,54 @@ def dashboard_html(local_api_token: str | None = None) -> str:
     });
     byId("report-cancel").addEventListener("click", () => { byId("report-form").hidden = true; });
 
+    byId("hosted-export").addEventListener("click", async () => {
+      const result = byId("hosted-result");
+      const button = byId("hosted-export");
+      result.className = "support-result";
+      result.textContent = "Exporting…";
+      button.disabled = true;
+      try {
+        const response = await fetch("/api/export", {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json", "X-MemorySafe-Setup-Token": localApiToken },
+          body: "{}",
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error ?? "The export could not be written");
+        const fileName = String(payload?.file_name ?? "");
+        const download = await fetch("/api/export/download", {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json", "X-MemorySafe-Setup-Token": localApiToken },
+          body: JSON.stringify({ name: fileName }),
+        });
+        if (!download.ok) throw new Error("The export could not be downloaded");
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(await download.blob());
+        link.download = fileName;
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+        result.replaceChildren();
+        const text = document.createElement("span");
+        text.textContent = `${payload.count} memories saved to your Downloads as ${fileName}. Next: open `;
+        const anchor = document.createElement("a");
+        anchor.href = "https://memory.memorysafe.ca/account/import";
+        anchor.target = "_blank";
+        anchor.rel = "noopener";
+        anchor.textContent = "memory.memorysafe.ca/account/import";
+        const tail = document.createElement("span");
+        tail.textContent = " and choose that file. Delete the file when you are done.";
+        result.append(text, anchor, tail);
+      } catch (error) {
+        result.className = "support-result bad";
+        result.textContent = error instanceof Error ? error.message : String(error);
+      } finally {
+        button.disabled = false;
+      }
+    });
     byId("report-send").addEventListener("click", async () => {
       const button = byId("report-send");
       const result = byId("support-result");
