@@ -76,14 +76,24 @@ def database_path() -> Path:
     return base / "data" / "memorysafe.sqlite3"
 
 
+def connect_read_only(database: Path) -> sqlite3.Connection:
+    """A read-only connection that never creates, migrates or write-locks the store:
+    mode=ro, and on Apple's system Python, which refuses that form on some paths,
+    mode=ro&immutable=1 (no locking at all). Same as capture_hook's."""
+    uri = database.resolve().as_uri()
+    try:
+        return sqlite3.connect(f"{uri}?mode=ro", uri=True, timeout=1)
+    except sqlite3.OperationalError:
+        return sqlite3.connect(f"{uri}?mode=ro&immutable=1", uri=True, timeout=1)
+
+
 def carried_memories(database: Path) -> tuple[int, list[tuple[str, str]]]:
     """(active count, [(category, content), ...]) for the memories worth every session:
     protected ones and the carried categories, protected and important first."""
     if not database.is_file():
         return 0, []
     try:
-        # mode=ro: this hook must never create, migrate or take a write lock on the store.
-        connection = sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True, timeout=1)
+        connection = connect_read_only(database)
         try:
             active = connection.execute(
                 "SELECT COUNT(*) FROM memories WHERE state = 'active'"
