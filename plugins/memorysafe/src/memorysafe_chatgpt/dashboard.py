@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 
 
@@ -7,8 +8,20 @@ DASHBOARD_URI = "ui://memorysafe/dashboard-v3.html"
 DASHBOARD_MIME_TYPE = "text/html;profile=mcp-app"
 
 
-def dashboard_html(local_api_token: str | None = None) -> str:
-    """Return the self-contained MemorySafe dashboard component."""
+def dashboard_html(
+    local_api_token: str | None = None,
+    *,
+    hosted: bool = False,
+    account_url: str | None = None,
+) -> str:
+    """Return the self-contained MemorySafe dashboard component.
+
+    hosted=True serves the same page from a remote server, where "this computer",
+    the local database path and the LOCAL label would all be untrue. Only hosted
+    needs account_url, the page's Manage link.
+    """
+    if hosted and not account_url:
+        raise ValueError("a hosted dashboard needs account_url")
 
     document = r"""<!doctype html>
 <html lang="en">
@@ -1267,7 +1280,74 @@ def dashboard_html(local_api_token: str | None = None) -> str:
   </script>
 </body>
 </html>"""
-    return document.replace("__LOCAL_API_TOKEN__", json.dumps(local_api_token))
+    document = document.replace("__LOCAL_API_TOKEN__", json.dumps(local_api_token))
+    if hosted:
+        document = _hosted_wording(document, account_url or "")
+    return document
+
+
+# Each pair is (local text, hosted text). Applied only to the hosted page, so the local
+# page stays byte-identical (tests/fixtures/dashboard_v3_local.html pins it). A pair that
+# no longer matches fails loudly instead of leaving "this computer" on a remote page.
+_HOSTED_WORDING = (
+    ("Private local memory governance", "Private memory governance"),
+    ('id="live-label">LOCAL · PRIVATE</div>', 'id="live-label">MEMORYSAFE CLOUD</div>'),
+    ("`LOCAL · PRIVATE · ${String(data.version)}`", "`MEMORYSAFE CLOUD · ${String(data.version)}`"),
+    ('id="agents-note">ON THIS COMPUTER</span>', 'id="agents-note">YOUR ASSISTANTS</span>'),
+    (
+        'id="token-model">Estimated from tokens counted on this computer. Not anyone’s billed usage.</p>',
+        'id="token-model">Not available</p>',
+    ),
+    (
+        'setText("token-model", "Estimated from tokens counted on this computer. Not anyone’s billed usage.");',
+        'setText("token-model", String(data.token_estimate?.note ?? "Not available"));',
+    ),
+    (
+        "const liveTokens = data.live_token_metrics ?? {};",
+        "const liveTokens = data.live_token_metrics ?? data.token_estimate ?? {};",
+    ),
+    (
+        '<p class="store-path">Reading <code id="database-path">—</code></p>',
+        '<p class="store-path"><code id="database-path">Stored in MemorySafe cloud</code>'
+        ' · <a id="manage-link" href="__ACCOUNT_HREF__">Manage on the web</a></p>',
+    ),
+    (
+        'setText("database-path", String(data.database_path ?? "unknown store"));',
+        'setText("database-path", String(data.stored_in ?? "Stored in MemorySafe cloud"));\n'
+        "      const manageLink = byId(\"manage-link\");\n"
+        "      if (manageLink && /^https:\\/\\//.test(accountUrl)) manageLink.href = accountUrl;",
+    ),
+    ("const localApiToken = ", "const accountUrl = __ACCOUNT_URL__;\n    const localApiToken = "),
+    # 0.4.27's Move to Hosted panel is for local users; on Hosted its export fetch has no
+    # server in a host's sandbox. Hidden, not removed: the script binds #hosted-export at
+    # load, and a missing element would throw and stop the whole page.
+    (
+        '<section class="panel hosted-panel" id="hosted-panel" aria-label="Take your memory everywhere">',
+        '<section class="panel hosted-panel" id="hosted-panel" aria-label="Take your memory everywhere" hidden>',
+    ),
+    (
+        '<p class="hosted-text">Hosted gives every assistant you use, on every device, this same memory. '
+        "Export a copy here, then import it into your Hosted account; nothing leaves this computer "
+        "until you upload the file yourself.</p>",
+        '<p class="hosted-text"></p>',
+    ),
+    ("on this computer", "on this device"),
+)
+
+
+def _hosted_wording(document: str, account_url: str) -> str:
+    for local, hosted in _HOSTED_WORDING:
+        if local not in document:
+            raise AssertionError(f"hosted wording no longer matches: {local[:50]!r}")
+        document = document.replace(local, hosted)
+    # json.dumps leaves "</script>" and "<!--" intact, so a URL could close the tag the
+    # constant sits in. \u003c and friends are the same string to JavaScript.
+    encoded = (
+        json.dumps(account_url).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    )
+    # The href attribute is for readers without script; only https is ever linked.
+    href = html.escape(account_url, quote=True) if account_url.startswith("https://") else "#"
+    return document.replace("__ACCOUNT_URL__", encoded).replace("__ACCOUNT_HREF__", href)
 
 
 def panel_html(local_api_token: str | None = None) -> str:
