@@ -16,6 +16,7 @@ from .token_metrics import count_text_tokens, tokenizer_metadata
 from .lifecycle import consider_incoming, extract_values, merge_compatible, record_relation
 from .backends import Backend
 from .backends.sqlite import SqliteBackend
+from .recall_context import context_terms
 
 
 # The numbers here used to be hand-entered constants with no derivation anywhere in
@@ -995,6 +996,7 @@ class MemoryStore:
     def find(self, query: str, limit: int, record: bool = True) -> list[dict[str, Any]]:
         query_normalized = _normalize(query)
         query_terms = _content_terms(query)
+        rule_terms = context_terms(query_terms, _content_terms)
         # Single digits never survived _content_terms (len > 1), so "room 7" searched
         # for "room" alone and returned rooms 4, 5 and 6. Numbers only boost; they do
         # not widen the candidate set.
@@ -1013,9 +1015,17 @@ class MemoryStore:
                 # the words actually being searched for instead of by rank, so the
                 # candidate set can never silently exclude the answer.
                 clause = " OR ".join("normalized_content LIKE ?" for _ in query_terms)
+                params = [f"%{term}%" for term in sorted(query_terms)]
+                if rule_terms:
+                    rule_clause = " OR ".join("normalized_content LIKE ?" for _ in rule_terms)
+                    clause += (
+                        " OR (category IN ('preference', 'decision') AND ("
+                        + rule_clause + "))"
+                    )
+                    params.extend(f"%{term}%" for term in sorted(rule_terms))
                 rows = connection.execute(
                     f"SELECT * FROM memories WHERE state = 'active' AND ({clause})",
-                    [f"%{term}%" for term in sorted(query_terms)],
+                    params,
                 ).fetchall()
             else:
                 # Browsing with no query: rank order is the right answer, and a cap is
@@ -1035,6 +1045,7 @@ class MemoryStore:
             ).fetchall()
 
         scored: list[tuple[float, sqlite3.Row]] = []
+        context_candidates: list[tuple[sqlite3.Row, set[str]]] = []
         for row in rows:
             if query_normalized:
                 content_terms = _content_terms(row["normalized_content"])
@@ -1060,6 +1071,8 @@ class MemoryStore:
                 # ties between memories that already matched.
                 relevance = (0.55 * match) + (0.35 * coverage)
                 if relevance < 0.12:
+                    if row["category"] in {"preference", "decision"} and rule_terms & content_terms:
+                        context_candidates.append((row, content_terms))
                     continue
                 # Only a tiebreak: too small to pull an irrelevant memory over the bar,
                 # big enough to separate two memories that matched equally well.
@@ -1079,6 +1092,25 @@ class MemoryStore:
             else:
                 score = float(row["importance"])
             scored.append((score, row))
+
+        # Supplement an actual answer, never invent one for an unmatched query.
+        # Preferences live in the user's personal layer on Hosted. Decisions also
+        # need a shared query anchor with a directly relevant memory (e.g. a project
+        # name); merely mentioning CSS must not pull in another project's rules.
+        # No new connection: the candidate query above uses the backend's normal
+        # read scope, including Hosted's user/project/organization RLS policies.
+        if scored and context_candidates:
+            direct_anchors = set().union(*(
+                query_terms & _content_terms(str(row["normalized_content"]))
+                for _, row in scored
+            )) - rule_terms
+            for row, terms in context_candidates:
+                if row["category"] == "decision" and not (terms & direct_anchors):
+                    continue
+                # Below every qualifying lexical result, including after importance
+                # tie-breaking. Bounded by the caller's limit just like direct hits.
+                score = 0.02 + 0.01 * len(terms & rule_terms) / len(rule_terms)
+                scored.append((score, row))
 
         scored.sort(key=lambda item: (item[0], item[1]["updated_at"]), reverse=True)
         flags = self._conflict_flags(scored, limit, open_relations)
