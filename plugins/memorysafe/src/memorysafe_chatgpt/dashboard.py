@@ -174,7 +174,7 @@ def dashboard_html(
     .memory-dot { width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: var(--blue); }
     .memory.protected .memory-dot { background: var(--cyan); box-shadow: 0 0 7px rgba(25,228,233,.55); }
     .memory-copy { min-width: 0; }
-    .memory-copy p { margin: 0; color: #dce5ed; font-size: 15px; overflow-wrap: anywhere; }
+    .memory-copy p { margin: 0; color: #dce5ed; font-size: 15px; overflow-wrap: anywhere; white-space: pre-line; }
     .memory-copy span { display: block; margin-top: 4px; color: var(--dim); font-size: 14px; }
     .priority { color: var(--muted); font: 700 14px ui-monospace, SFMono-Regular, Menlo, monospace; }
     .store-path { margin: 9px 0 0; color: var(--dim); font-size: 14px; }
@@ -1445,7 +1445,7 @@ def panel_html(local_api_token: str | None = None) -> str:
     .row:first-of-type { border-top: 0; }
     .dot { width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: var(--blue); }
     .row.protected .dot { background: var(--cyan); box-shadow: 0 0 6px rgba(25,228,233,.55); }
-    .row p { margin: 0; font-size: 11px; color: #dce5ed; overflow-wrap: anywhere; }
+    .row p { margin: 0; font-size: 11px; color: #dce5ed; overflow-wrap: anywhere; white-space: pre-line; }
     .row em { display: block; margin-top: 2px; color: var(--dim); font-style: normal; font-size: 8px; }
     .empty { color: var(--muted); font-size: 11px; padding: 12px 0; text-align: center; }
     footer { display: flex; gap: 8px; }

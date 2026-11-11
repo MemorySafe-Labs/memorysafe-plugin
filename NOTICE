@@ -1,15 +1,19 @@
 MemorySafe
 Copyright 2026 MemorySafe Labs Inc.
 
-Licensed under the Apache License, Version 2.0 (the "License"); you may not use
-this software except in compliance with the License. You may obtain a copy of
-the License at http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE
-file next to this one.
+This product is licensed under the Apache License, Version 2.0 (the "License");
+see the LICENSE file next to this one or http://www.apache.org/licenses/LICENSE-2.0.
 
-"MemorySafe" and the MemorySafe logo are trademarks of MemorySafe Labs Inc.
-The License does not grant permission to use them (Section 6).
+The License covers the software in this repository and every build of it that
+MemorySafe Labs distributes, including the Claude Code / Codex plugin and the
+Claude Desktop extension (.mcpb). You may use, copy, modify, test, benchmark,
+bundle and redistribute it, commercially or not, under the License. Nothing else
+needs to be accepted to install or evaluate it.
 
-The beta programme and the builds MemorySafe Labs distributes are governed by
-the MemorySafe Terms of Use (TERMS.md) and Privacy Policy (PRIVACY.md), not by
-this License. The MemorySafe Hosted service has its own terms and privacy
-policy at https://memory.memorysafe.ca/terms and /privacy.
+"MemorySafe" and the MemorySafe logo are trademarks of MemorySafe Labs Inc. The
+License does not grant permission to use them (Section 6); see TRADEMARKS.md.
+
+Separate, optional services run by MemorySafe Labs, such as MemorySafe Hosted
+(https://memory.memorysafe.ca), beta support and feedback programmes, have their
+own Terms of Use and Privacy Policy. Those terms apply only to those services and
+do not limit any right you have under the License for this software.

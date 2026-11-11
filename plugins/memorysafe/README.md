@@ -1,4 +1,4 @@
-# MemorySafe 0.4.30
+# MemorySafe 0.4.32
 
 Private, governed memory for Claude Code, Claude Desktop and Codex, kept in one SQLite
 file on your own computer. macOS, Linux and Windows. Free, and open source under the
@@ -201,11 +201,18 @@ do, so removing its extension stays with you: **Settings → Extensions → Memo
 
 ## Licence
 
-The code in this repository is open source under the [Apache License 2.0](LICENSE), with
-the copyright and trademark notice in [NOTICE](NOTICE). The MemorySafe name and logo are
-not part of the grant. The beta programme and the builds we distribute are governed by the
-[Terms of Use](TERMS.md) and the [Privacy Policy](PRIVACY.md); MemorySafe Hosted has its own
-at <https://memory.memorysafe.ca/terms> and <https://memory.memorysafe.ca/privacy>.
+MemorySafe is open source under the [Apache License 2.0](LICENSE): the code here **and every
+build we distribute** (Claude Code and Codex plugin, Claude Desktop extension). Install it,
+test it, benchmark it, fork it, or bundle it in your own project, MIT-licensed ones included;
+nothing else has to be accepted. Keep [LICENSE](LICENSE) and [NOTICE](NOTICE) with any copy
+you redistribute.
+
+The MemorySafe name and logo are trademarks and are not part of the licence; the
+[trademark policy](TRADEMARKS.md) says what you can do with them without asking (saying your
+project uses or bundles MemorySafe is fine). The optional beta programme has its own
+[Terms of Use](TERMS.md) and [Privacy Policy](PRIVACY.md), and MemorySafe Hosted has its own at
+<https://memory.memorysafe.ca/terms> and <https://memory.memorysafe.ca/privacy>; neither limits
+your rights under the licence.
 
 ## About the numbers
 

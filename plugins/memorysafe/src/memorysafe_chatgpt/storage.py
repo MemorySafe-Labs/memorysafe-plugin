@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .token_metrics import count_text_tokens, tokenizer_metadata
+from .text import clean_text, flat
 from .lifecycle import consider_incoming, extract_values, merge_compatible, record_relation
 from .backends import Backend
 from .backends.sqlite import SqliteBackend
@@ -618,13 +619,16 @@ class MemoryStore:
         confidence: float | None = None,
         source: str = "manual",
     ) -> dict[str, Any]:
-        clean_content = " ".join(content.split())
+        # Stored with its line breaks; every analysis below reads flat_content, which is
+        # exactly what 0.4.30 stored (memorysafe_chatgpt.text).
+        clean_content = clean_text(content)
+        flat_content = flat(clean_content)
         if not clean_content:
             raise ValueError("Memory content cannot be empty.")
         if len(clean_content) > 10_000:
             raise ValueError("Memory content is limited to 10,000 characters.")
 
-        normalized = _normalize(clean_content)
+        normalized = _normalize(flat_content)
         if not normalized:
             raise ValueError("Memory content must include letters or numbers.")
 
@@ -635,8 +639,8 @@ class MemoryStore:
             derived_importance, derived_confidence = self.score_memory(category, source)
             importance = derived_importance if importance is None else importance
             confidence = derived_confidence if confidence is None else confidence
-        anchored = bool(_DURABLE_ANCHOR.search(clean_content) or _DATE_HINT.search(clean_content)
-                        or _AMOUNT_HINT.search(clean_content))
+        anchored = bool(_DURABLE_ANCHOR.search(flat_content) or _DATE_HINT.search(flat_content)
+                        or _AMOUNT_HINT.search(flat_content))
         if derived and category == "project" and anchored:
             importance = 0.85
 
@@ -650,7 +654,7 @@ class MemoryStore:
                 (normalized,),
             ).fetchall()
             exact = next((row for row in exact_matches
-                          if merge_compatible(clean_content, row["content"])), None)
+                          if merge_compatible(flat_content, row["content"])), None)
             if exact and not self._backend.writable(exact):
                 return self._skip_read_only(connection, exact, content_bytes, source)
             if exact:
@@ -658,13 +662,17 @@ class MemoryStore:
                 protected = bool(exact["protected"] or must_protect)
                 new_importance = max(float(exact["importance"]), importance)
                 new_confidence = max(float(exact["confidence"]), confidence)
+                # A memory stored flat (every one before 0.4.31) takes the incoming wording
+                # when it brings line breaks back; a formatted memory is never flattened.
+                kept_content = (clean_content if "\n" in clean_content and "\n" not in exact["content"]
+                                else exact["content"])
                 connection.execute(
                     """
                     UPDATE memories
-                    SET importance = ?, confidence = ?, protected = ?, updated_at = ?
+                    SET content = ?, importance = ?, confidence = ?, protected = ?, updated_at = ?
                     WHERE id = ?
                     """,
-                    (new_importance, new_confidence, int(protected), timestamp, exact["id"]),
+                    (kept_content, new_importance, new_confidence, int(protected), timestamp, exact["id"]),
                 )
                 self._record_event(
                     connection,
@@ -677,7 +685,7 @@ class MemoryStore:
                 return {
                     "decision": "MERGE",
                     "memory_id": exact["id"],
-                    "content": exact["content"],
+                    "content": kept_content,
                     "category": exact["category"],
                     "importance": new_importance,
                     "confidence": new_confidence,
@@ -711,7 +719,7 @@ class MemoryStore:
                 # into "item 7, room 7" at similarity 0.92 and its text was lost.
                 if _number_tokens(row_normalized) != numbers:
                     continue
-                if not merge_compatible(clean_content, row["content"]):
+                if not merge_compatible(flat_content, row["content"]):
                     continue
                 score = _similarity(normalized, row_normalized, minimum=MERGE_THRESHOLD)
                 if score > closest_score:
@@ -730,8 +738,12 @@ class MemoryStore:
                 protected = bool(closest["protected"] or must_protect)
                 new_importance = max(float(closest["importance"]), importance)
                 new_confidence = max(float(closest["confidence"]), confidence)
+                # A formatted memory is never flattened by a one-line wording, however long
+                # (0.4.31: memories keep their line breaks); the wording goes into the history.
+                flattening = "\n" in closest["content"] and "\n" not in clean_content
                 replacement = (clean_content if confidence >= float(closest["confidence"])
-                               and len(clean_content) >= len(closest["content"]) else closest["content"])
+                               and len(clean_content) >= len(closest["content"]) and not flattening
+                               else closest["content"])
                 # Never lose text on a merge: whichever wording is not kept as the
                 # content is written into the history, where explain can show it.
                 kept_note = ""
@@ -823,7 +835,7 @@ class MemoryStore:
             # A memory can only be compared with one naming the same identifiers
             # ("room 27" is never about "room 7"; see lifecycle.consider_incoming), so
             # when this one has identifiers, let SQLite drop rows that lack them.
-            identifiers = sorted(extract_values(clean_content)[1])
+            identifiers = sorted(extract_values(flat_content)[1])
             others = connection.execute(
                 """
                 SELECT id, content, confidence FROM memories
@@ -835,7 +847,7 @@ class MemoryStore:
             lifecycle = self._apply_incoming_lifecycle(
                 connection,
                 new_id=memory_id,
-                new_content=clean_content,
+                new_content=flat_content,
                 new_confidence=float(confidence),
                 others=others,
                 source=source,
@@ -1079,7 +1091,7 @@ class MemoryStore:
                 score = (
                     relevance
                     + (0.1 * float(row["importance"]))
-                    + (0.08 * _shape_bonus(shape, str(row["content"])))
+                    + (0.08 * _shape_bonus(shape, flat(str(row["content"]))))
                 )
                 if query_numbers:
                     row_numbers = _number_tokens(normalized_row)

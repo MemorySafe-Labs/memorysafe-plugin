@@ -413,7 +413,7 @@ def memorysafe_dashboard_resource() -> str:
 def remember(
     content: Annotated[
         str,
-        Field(min_length=1, max_length=10_000, description="The fact to remember."),
+        Field(min_length=1, max_length=10_000, description="The fact to remember; line breaks are kept."),
     ],
     category: Annotated[Category, Field(description="Kind of memory.")] = "other",
 ) -> RememberResult:

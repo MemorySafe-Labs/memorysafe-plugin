@@ -1,11 +1,13 @@
 # MemorySafe Beta Terms of Use
 
-**Effective date:** September 20, 2026  
-**Version:** 0.2 - Private Beta
+**Effective date:** November 11, 2026  
+**Version:** 0.3 - Beta
 
-These Terms of Use ("Terms") are a legal agreement between you and MemorySafe Labs Inc. ("MemorySafe Labs," "we," "us," or "our") governing your access to and use of the MemorySafe private beta software, connector, dashboard, and related services (collectively, the "Beta").
+These Terms of Use ("Terms") are a legal agreement between you and MemorySafe Labs Inc. ("MemorySafe Labs," "we," "us," or "our") governing your participation in the MemorySafe beta programme and your use of the services MemorySafe Labs operates for it, such as beta support, feedback channels, and any online service that links to these Terms (collectively, the "Beta").
 
-By installing, connecting, accessing, or using the Beta, or by selecting an acceptance control presented with these Terms, you agree to these Terms. If you do not agree, do not use the Beta.
+**The MemorySafe software is open source.** The MemorySafe plugin, connector, dashboard, and the builds of them that we distribute are licensed under the Apache License, Version 2.0 (the "Open-Source Licence"). You do not need to accept these Terms to download, install, run, test, evaluate, benchmark, modify, bundle, or redistribute that software; the Open-Source Licence alone governs those rights, and nothing in these Terms restricts, conditions, or adds to them. See section 2A.
+
+These Terms apply when you choose to take part in the beta programme, for example by contacting us for support, sending feedback, or selecting an acceptance control presented with these Terms. If you do not agree, you can still use the software under the Open-Source Licence; just do not use the Beta services.
 
 ## 1. About MemorySafe Labs
 
@@ -15,7 +17,11 @@ Contact: contact@memorysafe.ca
 
 ## 2. Eligibility and beta participation
 
-You must be at least 18 years old and legally able to enter into this agreement. The Beta is invitation-only unless we state otherwise. You may use it only for your own lawful evaluation and in accordance with any testing instructions we provide.
+To enter into these Terms you must be at least 18 years old and legally able to enter into this agreement. Some parts of the beta programme (for example early builds or support channels) may be offered by invitation; the open-source software itself is available to everyone under the Open-Source Licence.
+
+## 2A. Open-source software licence
+
+The source code published at https://github.com/MemorySafe-Labs/memorysafe-plugin, and every build of it we distribute (including the Claude Code and Codex plugin and the Claude Desktop extension), is licensed to you under the Apache License, Version 2.0. If anything in these Terms conflicts with your rights under that licence for that software, the licence prevails. These Terms do not grant or restrict rights in the MemorySafe name and logo, which are covered by our trademark policy (TRADEMARKS.md), and do not cover MemorySafe Hosted, which has its own terms at https://memory.memorysafe.ca/terms.
 
 The Beta is experimental and may be incomplete, unavailable, inaccurate, or changed without notice. Features may fail, memories may not be captured or retrieved as expected, and stored information may be lost. Do not rely on the Beta as the only copy of important information.
 
@@ -116,7 +122,7 @@ We may update these Terms as the Beta changes. We will identify the effective da
 
 ## 16. General terms
 
-These Terms and the Privacy Policy are the entire agreement between you and MemorySafe Labs concerning the Beta. If a provision is unenforceable, it will be modified only to the extent necessary, and the remaining provisions will continue in effect. Our failure to enforce a provision is not a waiver. You may not transfer these Terms without our consent. We may transfer them as part of a reorganization, financing, merger, acquisition, or sale of the Beta, subject to applicable law.
+These Terms and the Privacy Policy are the entire agreement between you and MemorySafe Labs concerning the Beta, except that the Open-Source Licence alone governs your rights in the open-source software. If a provision is unenforceable, it will be modified only to the extent necessary, and the remaining provisions will continue in effect. Our failure to enforce a provision is not a waiver. You may not transfer these Terms without our consent. We may transfer them as part of a reorganization, financing, merger, acquisition, or sale of the Beta, subject to applicable law.
 
 ## 17. Contact
 

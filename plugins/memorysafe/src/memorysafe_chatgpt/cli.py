@@ -46,12 +46,18 @@ def _resolve_database(install_root: Path | None) -> Path:
     return Path(root) / "data" / "memorysafe.sqlite3"
 
 
+def _indent(text: str, prefix: str) -> str:
+    """Every line of `text` under `prefix`. Memories keep their line breaks since 0.4.31,
+    and an unindented second line would read as the next field of the listing."""
+    return "\n".join(prefix + line if line else line for line in str(text).split("\n"))
+
+
 def _print_explanation(detail: dict) -> None:
     if not detail.get("found"):
         print(f"No memory with id {detail['memory_id']}.")
         return
     print(f"{detail['memory_id']}  ({detail['state']})")
-    print(f"  {detail['content']}\n")
+    print(_indent(detail['content'], "  ") + "\n")
     if detail["protected"]:
         print(f"  Protected: {detail['protected_because']}")
         print(f"  Since:     {detail['protected_since']}")
@@ -60,7 +66,8 @@ def _print_explanation(detail: dict) -> None:
     print(f"  Recalled:  {detail['recall_count']} time(s)\n")
     print("  Decision history")
     for event in detail["history"]:
-        print(f"    {event['at'][:19]}  {event['decision']:8s} {event['reason']}")
+        head = f"    {event['at'][:19]}  {event['decision']:8s} "
+        print(head + _indent(event['reason'], " " * len(head)).lstrip(" "))
     if detail.get("relations"):
         print("\n  Replacements")
         for rel in detail["relations"]:
@@ -82,7 +89,7 @@ def _print_matches(query: str, matches: list[dict]) -> None:
     print(f'{len(matches)} match(es) for "{query}":\n')
     flagged = False
     for match in matches:
-        print(f"  {match['content']}")
+        print(_indent(match['content'], "  "))
         print(
             f"    {match['memory_id']}  {match['category']}  "
             f"confidence {match['confidence']:.2f}  "
@@ -102,7 +109,7 @@ def _print_matches(query: str, matches: list[dict]) -> None:
 
 def _print_written(result: dict) -> None:
     print(f"{result['decision']}  {result['memory_id']}")
-    print(f"  {result['content']}\n")
+    print(_indent(result['content'], "  ") + "\n")
     print(f"  Category:   {result['category']}")
     print(f"  Importance: {result['importance']}   Confidence: {result['confidence']}")
     print(f"  Protected:  {'yes' if result['protected'] else 'no'}")
@@ -137,7 +144,9 @@ def _print_conflicts(payload: dict) -> None:
         for side in ("old", "new"):
             memory = item.get(side)
             if memory:
-                print(f"    {side}: {memory['content']}  ({memory['memory_id']}, {memory['state']})")
+                head = f"    {side}: "
+                print(head + _indent(memory['content'], " " * len(head)).lstrip(" ")
+                      + f"  ({memory['memory_id']}, {memory['state']})")
         print(f"    {item['reason']} ({item['evidence']})\n")
     print("Decide with  memorysafe resolve-conflict <id> supersede|keep_both|restore|revert --confirm")
 

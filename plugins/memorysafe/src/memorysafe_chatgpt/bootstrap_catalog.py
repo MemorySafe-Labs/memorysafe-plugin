@@ -10,7 +10,7 @@ starts behind it.
 from __future__ import annotations
 
 
-VERSION = "0.4.30"
+VERSION = "0.4.32"
 PROTOCOL_VERSION = "2024-11-05"
 
 SERVER_INSTRUCTIONS = (
@@ -64,7 +64,7 @@ TOOLS = [
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 10_000,
-                    "description": "The fact to remember.",
+                    "description": "The fact to remember; line breaks are kept.",
                 },
                 "category": {
                     "type": "string",

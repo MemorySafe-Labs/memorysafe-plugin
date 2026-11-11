@@ -23,6 +23,7 @@ import re
 from typing import Any, Callable
 
 from .backends import insert_returning_id
+from .text import flat
 
 
 def _text():
@@ -193,7 +194,7 @@ def _strip_fillers(text_n: str) -> str:
 def extract_slots(content: str) -> tuple[tuple[str, str, str], ...]:
     """Return (kind, subject, value) slots. Empty subject means the clause is generic."""
 
-    clean = " ".join(content.split())
+    clean = flat(content)
     slots: list[tuple[str, str, str]] = []
 
     def add(kind: str, subject: str, value: str) -> None:
@@ -289,6 +290,9 @@ def extract_values(content: str) -> tuple[dict[str, frozenset], frozenset[str], 
     "room 7" -- is an identifier: it names *which* thing, so two memories with
     different identifiers are about different things, not a change of value.
     """
+    # Every public entry point reads the flat text: memories keep their line breaks
+    # since 0.4.31, and these patterns were written for one-line text.
+    content = flat(content)
 
     values: dict[str, set] = {}
     spans: list[tuple[int, int]] = []
@@ -438,6 +442,7 @@ def merge_compatible(new_content: str, old_content: str) -> bool:
     emphasis variant are merged; unknown paraphrases remain separate records.
     This also guards normalized keys written by older releases, without migration.
     """
+    new_content, old_content = flat(new_content), flat(old_content)
     _, normalize, _ = _text()
     new_values, new_ids, _ = extract_values(new_content)
     old_values, old_ids, _ = extract_values(old_content)
@@ -641,6 +646,7 @@ def classify_pair(new_content: str, old_content: str) -> dict[str, Any]:
     Returns action: unrelated | duplicate | contradict | review
     Age is never consulted.
     """
+    new_content, old_content = flat(new_content), flat(old_content)
 
     _, normalize, similarity_fn = _text()
     new_norm = normalize(new_content)
@@ -851,11 +857,12 @@ def consider_incoming(
 
     contradict: dict[str, Any] | None = None
     review: dict[str, Any] | None = None
+    new_content = flat(new_content)
     new_terms = _distinctive_terms(new_content)
     new_kinds = {slot[0] for slot in extract_slots(new_content)}
     new_ids = extract_values(new_content)[1]
     for row in existing:
-        old_content = str(row["content"])
+        old_content = flat(str(row["content"]))
         # Different identifiers ("room 7" vs "room 27") are different things;
         # classify_pair would say "unrelated" after a full similarity pass.
         if extract_values(old_content)[1] != new_ids:

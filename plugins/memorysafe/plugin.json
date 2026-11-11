@@ -1,13 +1,13 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "memorysafe",
-  "version": "0.4.30",
+  "version": "0.4.32",
   "description": "Private, governed local memory shared by Codex, Claude Code and Claude Desktop.",
   "author": {
     "name": "MemorySafe Labs"
   },
   "homepage": "https://memorysafe.ca",
-  "license": "Proprietary beta",
+  "license": "Apache-2.0",
   "keywords": ["memory", "privacy", "local", "mcp", "productivity"],
   "extensions": {
     "com.openai": {

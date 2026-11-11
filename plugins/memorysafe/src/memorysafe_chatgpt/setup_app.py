@@ -158,6 +158,8 @@ def status_payload(paths: SetupPaths) -> dict[str, Any]:
         "tunnel_id": tunnel_id if TUNNEL_ID_PATTERN.fullmatch(tunnel_id) else "",
         "connector_online": connector_ready(paths),
         "terms_accepted": accepted_the_current_documents(consent),
+        # Any saved choice, ticked or not: joining the beta programme is optional (Terms 0.3).
+        "consent_saved": bool(consent),
         # Told apart from a first run so the page can say why it is asking again,
         # rather than looking like it lost the answer.
         "terms_update_pending": bool(consent.get("terms_accepted"))
@@ -333,14 +335,14 @@ def save_connection(paths: SetupPaths, runtime_key: str, tunnel_id: str) -> None
 # The versions consent.json records. They are the ones printed in the documents
 # themselves, and test_legal_documents fails if they drift apart: a consent record
 # naming a version the user was never shown says nothing about what they agreed to.
-TERMS_VERSION = "0.2"
+TERMS_VERSION = "0.3"
 PRIVACY_VERSION = "0.3"
 # What the newest change says, shown when someone who accepted an earlier version is asked
 # again. It names the change itself: the banner used to describe the 0.2 change, which
 # would have been wrong the moment the Privacy Policy moved on its own.
 LEGAL_CHANGE_NOTE = (
-    "The Privacy Policy now says plainly that MemorySafe cannot tell when a fact is about "
-    "another person, so automatic mode may store one if your assistant submits it."
+    "The Terms now say plainly that the MemorySafe software is open source under the Apache "
+    "License 2.0 and that accepting them is optional: they only cover the beta programme."
 )
 
 
@@ -366,13 +368,13 @@ def accepted_the_current_documents(consent: Mapping[str, Any]) -> bool:
 
 
 def save_consent(paths: SetupPaths, terms_accepted: bool, automatic_mode: bool) -> None:
-    if not terms_accepted:
-        raise ValueError("Accept the Beta Terms and acknowledge the Privacy Policy to continue.")
+    # Joining the beta programme is optional (Terms 0.3): the software is Apache-2.0, so an
+    # unticked box records the choice and saves Automatic Mode instead of blocking setup.
     write_private_json(
         paths.state_dir / "consent.json",
         {
             "schema_version": 1,
-            "terms_accepted": True,
+            "terms_accepted": bool(terms_accepted),
             "terms_version": TERMS_VERSION,
             "privacy_version": PRIVACY_VERSION,
             "accepted_at": utc_now(),
@@ -450,7 +452,7 @@ SETUP_PAGE = r"""<!doctype html>
   <section class="route"><div class="endpoint"><span>Memory lives on</span><strong>This computer</strong></div><div class="arrow">↔</div><div class="endpoint"><span>Use MemorySafe from</span><strong>Your assistants</strong><span id="agents-summary" class="offline">Looking for them…</span></div></section>
   <section class="steps">
     <article class="step done"><div class="number">✓</div><div><h2>MemorySafe is installed</h2><p>The dashboard and the local connector are ready on this computer.</p><div class="actions"><a class="button" href="/dashboard">Open MemorySafe dashboard</a></div></div></article>
-    <article class="step" id="agreement-step"><div class="number">2</div><div><h2>Review the private-beta agreement</h2><div class="fold"><p>Legal acceptance and optional Automatic Mode use separate choices.</p><label class="check"><input id="terms" type="checkbox"> <span>I agree to the <a href="/legal/terms" target="_blank">Beta Terms of Use</a> and acknowledge the <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</span></label><label class="check"><input id="automatic" type="checkbox"> <span><strong id="automatic-state">Automatic capture is off.</strong> <span id="automatic-help">Tick this to let MemorySafe save concise, durable, non-sensitive facts as you work.</span> Secrets, ID numbers, contact details, addresses and health information are never captured this way. You can change this whenever you like from the dashboard.</span></label><div class="actions"><button id="save-consent">Accept and continue</button></div><div id="terms-update" class="message"></div><div id="consent-message" class="message"></div></div></div></article>
+    <article class="step" id="agreement-step"><div class="number">2</div><div><h2>Choose your options</h2><div class="fold"><p>MemorySafe is open source under the Apache License 2.0. Both choices below are optional and separate.</p><label class="check"><input id="terms" type="checkbox"> <span>Optional: join the beta programme. I agree to the <a href="/legal/terms" target="_blank">Beta Terms of Use</a> and acknowledge the <a href="/legal/privacy" target="_blank">Privacy Policy</a>.</span></label><label class="check"><input id="automatic" type="checkbox"> <span><strong id="automatic-state">Automatic capture is off.</strong> <span id="automatic-help">Tick this to let MemorySafe save concise, durable, non-sensitive facts as you work.</span> Secrets, ID numbers, contact details, addresses and health information are never captured this way. You can change this whenever you like from the dashboard.</span></label><div class="actions"><button id="save-consent">Save and continue</button></div><div id="terms-update" class="message"></div><div id="consent-message" class="message"></div></div></div></article>
     <article class="step" id="assistants-step"><div class="number">3</div><div><h2>Connect your assistants</h2><div class="fold"><p>Every assistant you connect shares the same memory. Each one is installed through its own installer; Claude Desktop asks you to confirm its extension yourself.</p><div class="agent-list" id="agent-list"></div><div id="agents-message" class="message"></div></div></div></article>
   </section>
   <section id="chatgpt-wrap" hidden>
@@ -477,10 +479,10 @@ function fold(id,done){const el=byId(id);if(!el.dataset.open)el.classList.toggle
 for(const id of ['agreement-step','assistants-step']){byId(id).querySelector('h2').addEventListener('click',()=>{const el=byId(id);if(el.classList.contains('collapsed')){el.dataset.open='1';el.classList.remove('collapsed')}})}
 function showChatgpt(open){byId('chatgpt-steps').hidden=!open;byId('chatgpt-toggle').textContent=open?'Hide ChatGPT setup':'Show ChatGPT setup'}
 byId('chatgpt-toggle').addEventListener('click',()=>{byId('chatgpt-toggle').dataset.user='1';showChatgpt(byId('chatgpt-steps').hidden)});
-function render(s){byId('device-id').textContent=s.device_id;if(!consentDirty){byId('terms').checked=Boolean(s.terms_accepted);byId('automatic').checked=Boolean(s.automatic_mode)}syncAutomatic();if(!byId('tunnel-id').value&&s.tunnel_id)byId('tunnel-id').value=s.tunnel_id;byId('agreement-step').classList.toggle('done',Boolean(s.terms_accepted));fold('agreement-step',Boolean(s.terms_accepted)&&!s.terms_update_pending);if(!byId('chatgpt-toggle').dataset.user)showChatgpt(Boolean(s.runtime_key_saved||s.tunnel_configured||s.connector_online));const update=byId('terms-update');if(s.terms_update_pending){update.textContent=`The Beta Terms of Use or Privacy Policy changed since you accepted them. ${s.legal_change_note||''} Please read them and accept again. Nothing has stopped working, and your memories are untouched.`;update.style.display='block'}else{update.style.display='none'}byId('connection-step').classList.toggle('done',Boolean(s.runtime_key_saved&&s.tunnel_configured));byId('chatgpt-step').classList.toggle('done',Boolean(s.connector_online));byId('key-note').textContent=s.runtime_key_saved?'A private runtime key is already saved. Leave the field empty to keep it.':'Paste the runtime key once; it will remain only on this Mac.';const online=byId('online-label');online.textContent=s.connector_online?'ONLINE · READY':'DESKTOP CONNECTOR OFFLINE';online.className=s.connector_online?'online':'offline';byId('connect-button').classList.toggle('disabled',!(s.terms_accepted&&s.runtime_key_saved&&s.tunnel_configured));}
+function render(s){byId('device-id').textContent=s.device_id;if(!consentDirty){byId('terms').checked=Boolean(s.terms_accepted);byId('automatic').checked=Boolean(s.automatic_mode)}syncAutomatic();if(!byId('tunnel-id').value&&s.tunnel_id)byId('tunnel-id').value=s.tunnel_id;byId('agreement-step').classList.toggle('done',Boolean(s.consent_saved||s.terms_accepted));fold('agreement-step',Boolean(s.consent_saved||s.terms_accepted)&&!s.terms_update_pending);if(!byId('chatgpt-toggle').dataset.user)showChatgpt(Boolean(s.runtime_key_saved||s.tunnel_configured||s.connector_online));const update=byId('terms-update');if(s.terms_update_pending){update.textContent=`The Beta Terms of Use or Privacy Policy changed since you accepted them. ${s.legal_change_note||''} Please read them and accept again. Nothing has stopped working, and your memories are untouched.`;update.style.display='block'}else{update.style.display='none'}byId('connection-step').classList.toggle('done',Boolean(s.runtime_key_saved&&s.tunnel_configured));byId('chatgpt-step').classList.toggle('done',Boolean(s.connector_online));byId('key-note').textContent=s.runtime_key_saved?'A private runtime key is already saved. Leave the field empty to keep it.':'Paste the runtime key once; it will remain only on this Mac.';const online=byId('online-label');online.textContent=s.connector_online?'ONLINE · READY':'DESKTOP CONNECTOR OFFLINE';online.className=s.connector_online?'online':'offline';byId('connect-button').classList.toggle('disabled',!(s.runtime_key_saved&&s.tunnel_configured));}
 async function refresh(){try{render(await api('/api/status'))}catch(e){byId('online-label').textContent='STATUS UNAVAILABLE'}}
 byId('terms').addEventListener('change',()=>{consentDirty=true});byId('automatic').addEventListener('change',()=>{consentDirty=true;syncAutomatic()});
-byId('save-consent').addEventListener('click',async()=>{byId('agreement-step').dataset.open='1';try{await api('/api/consent',{method:'POST',body:JSON.stringify({terms_accepted:byId('terms').checked,automatic_mode:byId('automatic').checked})});consentDirty=false;show('consent-message','Agreement saved on this computer.');await refresh()}catch(e){show('consent-message',e.message,true)}});
+byId('save-consent').addEventListener('click',async()=>{byId('agreement-step').dataset.open='1';try{await api('/api/consent',{method:'POST',body:JSON.stringify({terms_accepted:byId('terms').checked,automatic_mode:byId('automatic').checked})});consentDirty=false;show('consent-message','Choices saved on this computer.');await refresh()}catch(e){show('consent-message',e.message,true)}});
 byId('save-connection').addEventListener('click',async()=>{try{await api('/api/connection',{method:'POST',body:JSON.stringify({tunnel_id:byId('tunnel-id').value,runtime_key:byId('runtime-key').value})});byId('runtime-key').value='';show('connection-message','Private connection saved. MemorySafe is starting…');setTimeout(refresh,1200)}catch(e){show('connection-message',e.message,true)}});
 byId('refresh').addEventListener('click',refresh);refresh();setInterval(refresh,3500);
 // The ChatGPT tunnel is set up by the macOS installer only; anywhere else those two steps
