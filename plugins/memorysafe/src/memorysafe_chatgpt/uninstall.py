@@ -25,6 +25,7 @@ from __future__ import annotations
 import errno
 import os
 import shutil
+import sqlite3
 import subprocess
 import time
 from pathlib import Path
@@ -244,7 +245,16 @@ def default_data_root(home: Path, env: Mapping[str, str], platform: str) -> Path
 
 
 def back_up_memories(home: Path, data_root: Path) -> Path | None:
-    """Copy the database out before a purge deletes it. Returns where it went."""
+    """Copy the store out before a purge deletes it. Returns where it went.
+
+    Never a copy of the one file. The store keeps its newest saves in a write-ahead log
+    beside it for as long as any assistant has it open, so the file alone could be missing
+    them, and the purge then deleted the log. And after an erase whose rewrite was refused,
+    the file's freed pages may still hold the erased text. SQLite writes the copy instead
+    (VACUUM INTO): every row that exists now, nothing that was deleted. The copy is checked
+    before this returns; if it cannot be made or does not check out, this raises and the
+    caller leaves the store where it is.
+    """
 
     database = data_root / "data" / "memorysafe.sqlite3"
     if not database.is_file():
@@ -252,8 +262,115 @@ def back_up_memories(home: Path, data_root: Path) -> Path | None:
     from datetime import datetime
 
     target = home / f"{BACKUP_PREFIX}{datetime.now().strftime('%Y%m%d-%H%M%S')}.sqlite3"
-    shutil.copy2(database, target)
+    if not _readable(database):
+        # Not a store SQLite can read: damaged, or not ours. Its bytes are all there is to
+        # keep, so they are kept as they are, the log and its index with them. Asked
+        # read-only, before anything opens the file for writing: a writer may clear away a
+        # log it cannot make sense of.
+        _raw_copy(database, target)
+        return target
+    pending = _erase_unfinished(database)
+    try:
+        _sqlite_copy(database, target, without_freed_pages=True)
+    except sqlite3.Error as error:
+        _discard(target)
+        if pending:
+            raise OSError(
+                "an erase is still waiting for the store's file to be rewritten, and a copy without "
+                f"the erased text could not be made ({type(error).__name__}); run "
+                "`memorysafe erase --finish` and try again"
+            ) from error
+        try:
+            # A SQLite too old for VACUUM INTO. Its backup takes the log's contents too.
+            _sqlite_copy(database, target, without_freed_pages=False)
+        except sqlite3.Error as second:
+            _discard(target)
+            raise OSError(f"a complete copy of the store could not be made ({type(second).__name__})") from second
     return target
+
+
+def _erase_unfinished(database: Path) -> bool:
+    """Whether a permanent erase still waits for this store's file to be rewritten. A file
+    that cannot be read as a store carries no such mark."""
+
+    from .backends.sqlite import ERASE_UNFINISHED
+
+    try:
+        connection = sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True, timeout=2)
+        try:
+            row = connection.execute("SELECT 1 FROM settings WHERE key = ?", (ERASE_UNFINISHED,)).fetchone()
+        finally:
+            connection.close()
+    except (sqlite3.Error, OSError):
+        return False
+    return row is not None
+
+
+def _rows(connection: sqlite3.Connection) -> int:
+    return int(connection.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
+
+
+def _readable(database: Path) -> bool:
+    try:
+        connection = sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True, timeout=2)
+        try:
+            _rows(connection)
+        finally:
+            connection.close()
+    except (sqlite3.Error, OSError):
+        return False
+    return True
+
+
+def _sqlite_copy(database: Path, target: Path, *, without_freed_pages: bool) -> None:
+    """Have SQLite write `target` from the store, then check it: sound, and holding as many
+    memories as the store did. Raises sqlite3.Error when either step fails."""
+
+    from .backends.sqlite import ERASE_UNFINISHED
+
+    source = sqlite3.connect(database, timeout=10)
+    try:
+        before = _rows(source)
+        if without_freed_pages:
+            source.execute("VACUUM INTO ?", (str(target),))
+        else:
+            destination = sqlite3.connect(target)
+            try:
+                source.backup(destination)
+            finally:
+                destination.close()
+        after = _rows(source)
+    finally:
+        source.close()
+    copy = sqlite3.connect(target)
+    try:
+        # The copy has nothing left to rewrite.
+        copy.execute("DELETE FROM settings WHERE key = ?", (ERASE_UNFINISHED,))
+        copy.commit()
+        sound = str(copy.execute("PRAGMA quick_check").fetchone()[0])
+        held = _rows(copy)
+    finally:
+        copy.close()
+    # An assistant may save while the copy is written; the copy holds the store as it was
+    # at one moment in between.
+    if sound != "ok" or not min(before, after) <= held <= max(before, after):
+        raise sqlite3.DatabaseError("the copy does not hold what the store holds")
+
+
+def _raw_copy(database: Path, target: Path) -> None:
+    shutil.copy2(database, target)
+    for suffix in ("-wal", "-shm"):
+        sidecar = database.with_name(database.name + suffix)
+        if sidecar.is_file():
+            shutil.copy2(sidecar, target.with_name(target.name + suffix))
+
+
+def _discard(target: Path) -> None:
+    for suffix in ("", "-journal", "-wal", "-shm"):
+        try:
+            target.with_name(target.name + suffix).unlink()
+        except OSError:
+            pass
 
 
 # How hard to try before calling a path stuck, and how long to wait between tries.

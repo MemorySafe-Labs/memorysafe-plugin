@@ -16,8 +16,9 @@ from .token_metrics import count_text_tokens, tokenizer_metadata
 from .text import clean_text, flat
 from .lifecycle import consider_incoming, extract_values, merge_compatible, record_relation
 from .backends import Backend
-from .backends.sqlite import SqliteBackend
+from .backends.sqlite import ERASE_UNFINISHED_STATUS, SqliteBackend
 from .recall_context import context_terms
+from . import plans, retention
 
 
 # The numbers here used to be hand-entered constants with no derivation anywhere in
@@ -193,6 +194,111 @@ def _content_terms(text: str) -> set[str]:
     return {_stem(t) for t in _normalize(text).split() if t not in _STOPWORDS and len(t) > 1}
 
 
+# ---------------------------------------------------------------------------
+# Recall scoring.
+#
+# A search used to score a memory by how many of the query's words it held, every word
+# counting the same. "Which platforms ship first" then ranked a note that said "ships"
+# above the one about platforms, because "ship" and "platform" weighed alike although
+# six notes mention shipping and one lists the platforms. Each query word is now weighed
+# by how few memories hold it (the inverse document frequency of BM25, computed over this
+# store at search time, nothing precomputed), and a memory must cover enough of that
+# weight to come back at all.
+RELEVANCE_BAR = 0.35
+# A query word found in no memory at all says little either way ("tell", "first"); at
+# full weight it sank true matches. It counts for this fraction of the heaviest word that
+# was found.
+ABSENT_WORD_WEIGHT = 0.6
+SMALL_STORE = 20
+FUZZY_MATCH = 0.8
+MAX_KEYWORDS = 8
+MAX_KEYWORD_CHARS = 40
+MAX_SEARCH_TERMS = 24
+
+_CJK = re.compile("[\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\uff66-\uff9f]")
+_QUERY_WORD = re.compile(r"[^\W\d_][\w'’-]*", re.UNICODE)
+
+
+def _stem_query(token: str) -> str:
+    """_stem, plus the one plural it missed: enemies -> enemy (it gave "enemi")."""
+
+    if len(token) > 4 and token.endswith("ies"):
+        return token[:-3] + "y"
+    return _stem(token)
+
+
+@lru_cache(maxsize=16384)
+def _match_terms(text: str) -> frozenset[str]:
+    """The words of a memory or a query that recall matches on (cached: every search
+    asks this of every candidate, and a store's texts repeat from one search to the next)."""
+
+    return frozenset(
+        _stem_query(token) for token in _normalize(text).split() if token not in _STOPWORDS and len(token) > 1
+    )
+
+
+def _fuzzy(left: str, right: str) -> float:
+    """1.0 for the same word, FUZZY_MATCH for one that only ends differently, else 0.
+
+    "publish" and "publisher", "deploy" and "deployment": the short stemmer leaves them
+    apart. They share everything but the ending when the common prefix is all of the
+    shorter word but its last letter, and the shorter word is long enough that this is
+    not "cat" and "category".
+    """
+
+    if left == right:
+        return 1.0
+    short, long_ = (left, right) if len(left) <= len(right) else (right, left)
+    if len(short) < 4:
+        return 0.0
+    common = 0
+    for a, b in zip(short, long_):
+        if a != b:
+            break
+        common += 1
+    if common >= max(4, len(short) - 1) and (len(short) >= 6 or len(long_) - common <= 3):
+        return FUZZY_MATCH
+    return 0.0
+
+
+def _named_in_query(query: str) -> frozenset[str]:
+    """The names a question is about: its capitalised words, other than the first.
+
+    "Who published Hollow Knight?" is about Hollow Knight. A store that has never heard
+    of it has no answer, however many of its memories mention a publisher.
+    """
+
+    words = _QUERY_WORD.findall(query)
+    names = set()
+    for position, word in enumerate(words):
+        if position and word[0].isupper() and word.casefold() not in _STOPWORDS:
+            names.update(_match_terms(word))
+    return frozenset(names)
+
+
+def clean_keywords(keywords: Any, content: str = "") -> str:
+    """Search words an assistant offered with a memory, as stored: folded, deduplicated,
+    without the words the memory already holds, bounded in number and length."""
+
+    if not keywords:
+        return ""
+    if isinstance(keywords, str):
+        keywords = re.split(r"[,;\n]+", keywords)
+    held = set(_normalize(content).split())
+    words: list[str] = []
+    for keyword in list(keywords)[:MAX_KEYWORDS]:
+        for word in _normalize(str(keyword)[:MAX_KEYWORD_CHARS]).split():
+            if word not in held and word not in words and word not in _STOPWORDS and len(word) > 1:
+                words.append(word)
+    return " ".join(words[:MAX_SEARCH_TERMS])
+
+
+def _merged_terms(held: Any, incoming: str, content: str) -> str:
+    """A memory's search words after the same fact was saved again with more of them."""
+
+    return clean_keywords(f"{held or ''} {incoming}".split(), content)
+
+
 MERGE_THRESHOLD = 0.88
 # What remember() says when the fact is already held in a memory it may not change,
 # which only happens in a store several people share.
@@ -233,6 +339,16 @@ _DURABLE_ANCHOR = re.compile(
     re.IGNORECASE,
 )
 ROUTINE_MIN_SIBLINGS = 2
+# Under a capacity bound, what earns an unprotected memory its place: what kind it is,
+# how often it has come up (each use counts, with diminishing returns), a little for how
+# recently (so a memory saved this week is not evicted before anyone could need it), and
+# stating something later work depends on (a rule, a deadline, a commitment). Having been
+# used counts for far more than being new: weighing the two alike kept last week's status
+# updates and evicted facts that had been looked up for months. Dates and amounts alone
+# are not an anchor, because every meeting note has one.
+USE_KEEP = 2.0
+RECENCY_KEEP = 0.3
+ANCHOR_KEEP = 1.5
 
 
 def _max_active() -> int | None:
@@ -343,6 +459,15 @@ def _why_protected(category: str, importance: float, source: str) -> str:
     return f"Kept because {asked} (importance {importance:.2f})."
 
 
+class _StoreFull(Exception):
+    """A new memory would take the store past its plan. Raised inside the write's
+    transaction, so nothing of the write survives."""
+
+    def __init__(self, used: int, limit: int, plan: str):
+        super().__init__("store full")
+        self.used, self.limit, self.plan = used, limit, plan
+
+
 class MemoryStore:
     """One user's memories: the engine that decides, over a backend that stores.
 
@@ -412,6 +537,9 @@ class MemoryStore:
             "protected_since": protecting["at"] if protecting and is_protected else None,
             "confidence": float(memory["confidence"]),
             "recall_count": int(memory["recall_count"] or 0),
+            "restated_count": int(memory["restated_count"] or 0),
+            "last_used_at": memory["last_used_at"],
+            "keywords": str(memory["search_terms"] or "").split(),
             "state": str(memory["state"]),
             "history": history,
             "relations": self._relations_for(memory_id),
@@ -423,6 +551,15 @@ class MemoryStore:
                 "the row or its history."
             ),
         }
+
+    def _plan_summary(self) -> dict[str, Any] | None:
+        """{"plan", "used", "limit"} for a store that has a plan limit, else None."""
+
+        with self._session() as connection:
+            room = getattr(self._backend, "room", lambda _connection: None)(connection)
+        if room is None:
+            return None
+        return {"plan": room[2], "used": room[0], "limit": room[1]}
 
     def _pruned_recall_count(self, connection: sqlite3.Connection) -> int:
         row = connection.execute(
@@ -618,11 +755,62 @@ class MemoryStore:
         importance: float | None = None,
         confidence: float | None = None,
         source: str = "manual",
+        keywords: Any = None,
     ) -> dict[str, Any]:
+        """Store one memory, unless the store is full.
+
+        A plan holds so many active memories (memorysafe_chatgpt.plans). A new memory that
+        would take the store past its plan is not saved, and nothing is removed to make room
+        for it: the write is rolled back whole and the result says FULL, with the count and
+        what to do. Saying a fact again (a merge) and correcting one (a replacement) add no
+        memory, so they still work in a full store.
+        """
+
+        try:
+            return self._remember(content, category, importance, confidence, source, keywords)
+        except _StoreFull as full:
+            with self._session() as connection:
+                self._record_event(
+                    connection, "FULL", None, plans.full_reason(full.used, full.limit, full.plan),
+                    len(content.encode("utf-8")), source,
+                )
+            return {
+                "decision": "FULL",
+                "memory_id": None,
+                "content": clean_text(content),
+                "category": category,
+                "importance": None,
+                "confidence": None,
+                "protected": False,
+                "reason": plans.full_reason(full.used, full.limit, full.plan),
+                "lifecycle": "none",
+                "replaced_memory_id": None,
+                "conflict_id": None,
+                "lifecycle_reason": None,
+                "evicted_memory_ids": [],
+            }
+
+    def _remember(
+        self,
+        content: str,
+        category: str,
+        importance: float | None = None,
+        confidence: float | None = None,
+        source: str = "manual",
+        keywords: Any = None,
+    ) -> dict[str, Any]:
+        """Store one memory. `keywords` are other words it might be searched by, offered by
+        whoever is saving it: an assistant asked for "the persistence layer" finds the note
+        that says "save system uses JSON files" only if something says they are the same
+        thing, and the assistant writing the note is the one that knows. They are search
+        words only: never shown as the memory, never compared when deciding duplicates or
+        contradictions, and they travel and are erased with the memory's row."""
+
         # Stored with its line breaks; every analysis below reads flat_content, which is
         # exactly what 0.4.30 stored (memorysafe_chatgpt.text).
         clean_content = clean_text(content)
         flat_content = flat(clean_content)
+        search_terms = clean_keywords(keywords, flat_content)
         if not clean_content:
             raise ValueError("Memory content cannot be empty.")
         if len(clean_content) > 10_000:
@@ -669,10 +857,16 @@ class MemoryStore:
                 connection.execute(
                     """
                     UPDATE memories
-                    SET content = ?, importance = ?, confidence = ?, protected = ?, updated_at = ?
+                    SET content = ?, importance = ?, confidence = ?, protected = ?, updated_at = ?,
+                        restated_count = COALESCE(restated_count, 0) + 1, last_used_at = ?,
+                        search_terms = ?
                     WHERE id = ?
                     """,
-                    (kept_content, new_importance, new_confidence, int(protected), timestamp, exact["id"]),
+                    # Saying the same thing again is a use: the fact came up a second time,
+                    # which is evidence it matters that the store has and the model does not.
+                    (kept_content, new_importance, new_confidence, int(protected), timestamp,
+                     timestamp, _merged_terms(exact["search_terms"], search_terms, kept_content),
+                     exact["id"]),
                 )
                 self._record_event(
                     connection,
@@ -755,7 +949,9 @@ class MemoryStore:
                     """
                     UPDATE memories
                     SET content = ?, normalized_content = ?, importance = ?, confidence = ?,
-                        protected = ?, updated_at = ?
+                        protected = ?, updated_at = ?,
+                        restated_count = COALESCE(restated_count, 0) + 1, last_used_at = ?,
+                        search_terms = ?
                     WHERE id = ?
                     """,
                     (
@@ -765,6 +961,8 @@ class MemoryStore:
                         new_confidence,
                         int(protected),
                         timestamp,
+                        timestamp,
+                        _merged_terms(closest["search_terms"], search_terms, replacement),
                         closest["id"],
                     ),
                 )
@@ -808,8 +1006,8 @@ class MemoryStore:
                 """
                 INSERT INTO memories(
                     id, content, normalized_content, category, importance, confidence,
-                    protected, state, source, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+                    protected, state, source, created_at, updated_at, search_terms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
                 """,
                 (
                     memory_id,
@@ -822,6 +1020,7 @@ class MemoryStore:
                     source,
                     timestamp,
                     timestamp,
+                    search_terms,
                 ),
             )
             self._record_event(
@@ -855,6 +1054,12 @@ class MemoryStore:
             )
             cap = _max_active()
             evicted = self._enforce_capacity(connection, cap, keep_id=memory_id) if cap else []
+            # Last, so a correction that replaced an older fact, or an eviction the person
+            # opted into, has already made its room. Raising here rolls the whole write
+            # back: the memory, its events, and any conflict it opened.
+            room = getattr(self._backend, "room", lambda _connection, **_: None)(connection, memory_id=memory_id)
+            if room is not None and room[0] > room[1]:
+                raise _StoreFull(room[0] - 1, room[1], room[2])
 
         result = {
             "decision": decision,
@@ -938,11 +1143,16 @@ class MemoryStore:
         memories, open-conflict participants and the memory just written are
         never evicted. If only these remain, the target can be exceeded.
 
-        Order: never-recalled before recalled, routine (shares its wording apart from
-        numbers with 2+ other active memories) before one-off, then lower importance,
-        then older. A rare fact therefore outlives hundreds of routine log lines even
-        when its category scores lower. Eviction is a state change, recorded as an
-        EVICT event, and restore() brings a memory back.
+        Order: routine entries first (a memory that shares its wording apart from numbers
+        with 2+ other active ones), oldest of each series first; then the one-off
+        memories least likely to be needed again. "Least likely to be needed" was
+        never-recalled, then lowest importance, then oldest, which read every memory
+        nobody had searched for as equally worthless: a hard constraint saved once and
+        never looked up again has no recalls to show, and it was among the first to go. It is now what kind of memory it
+        is, how often and how recently it has come up, and whether it states a rule, a
+        deadline or a commitment. A rare fact therefore outlives hundreds of routine log
+        lines even when its category scores lower. Eviction is a state change, recorded
+        as an EVICT event, and restore() brings a memory back.
         """
 
         active = int(
@@ -953,11 +1163,13 @@ class MemoryStore:
             return []
         rows = connection.execute(
             """
-            SELECT id, normalized_content, importance, protected, updated_at,
+            SELECT id, content, normalized_content, importance, protected, source, created_at,
+                   updated_at, last_used_at, COALESCE(restated_count, 0) AS restated_count,
                    COALESCE(recall_count, 0) AS recall_count
             FROM memories WHERE state = 'active'
             """
         ).fetchall()
+        now = retention.parse_time(_now()) or datetime.now(timezone.utc)
         templates = Counter(_template(row["normalized_content"]) for row in rows)
         # A confidence review promises both sides remain available. Eviction must
         # not undo that decision immediately, or on a later unrelated write.
@@ -971,14 +1183,20 @@ class MemoryStore:
         def value(row: sqlite3.Row) -> tuple:
             siblings = templates[_template(row["normalized_content"])] - 1
             routine = siblings >= ROUTINE_MIN_SIBLINGS
-            return (
-                row["recall_count"] > 0,
-                not routine,
+            if routine:
                 # Within a routine series the entries are interchangeable, including
                 # the first two (scored before the series was recognisable): oldest go.
-                0.0 if routine else float(row["importance"]),
-                str(row["updated_at"]),
+                return (0, 0.0, str(row["updated_at"]))
+            text = flat(str(row["content"]))
+            uses = int(row["recall_count"] or 0) + int(row["restated_count"] or 0)
+            kept_for = (
+                retention.SALIENCE_WEIGHT * float(row["importance"])
+                + USE_KEEP * math.log1p(uses)
+                + RECENCY_KEEP * retention.row_activation(row, now)
             )
+            if _DURABLE_ANCHOR.search(text):
+                kept_for += ANCHOR_KEEP
+            return (1, kept_for, str(row["updated_at"]))
 
         candidates.sort(key=value)
         timestamp = _now()
@@ -1007,17 +1225,19 @@ class MemoryStore:
 
     def find(self, query: str, limit: int, record: bool = True) -> list[dict[str, Any]]:
         query_normalized = _normalize(query)
-        query_terms = _content_terms(query)
-        rule_terms = context_terms(query_terms, _content_terms)
+        query_terms = set(_match_terms(query))
+        rule_terms = context_terms(set(_content_terms(query)), _content_terms)
         # Single digits never survived _content_terms (len > 1), so "room 7" searched
         # for "room" alone and returned rooms 4, 5 and 6. Numbers only boost; they do
         # not widen the candidate set.
         query_numbers = _number_tokens(query_normalized)
         query_padded = f" {query_normalized} "
         shape = _question_shape(query)
+        named = _named_in_query(query)
         if query_normalized and not query_terms:
             # Nothing but stopwords: no basis to return anything.
             query_normalized = ""
+        active_total = 0
         with self._session() as connection:
             if query_terms:
                 # Previously this took the top 1000 by protection, importance and
@@ -1026,8 +1246,17 @@ class MemoryStore:
                 # still counted, still "protected", and impossible to recall. Narrow by
                 # the words actually being searched for instead of by rank, so the
                 # candidate set can never silently exclude the answer.
-                clause = " OR ".join("normalized_content LIKE ?" for _ in query_terms)
-                params = [f"%{term}%" for term in sorted(query_terms)]
+                #
+                # Each word is looked for in the memory's text and in its search words.
+                # Both stems of a word are tried, because the stored text is not stemmed:
+                # "enemies" is found by "enemi" and "enemy" by "enemy".
+                like_terms = sorted(query_terms | _content_terms(query))
+                clause = " OR ".join(
+                    "normalized_content LIKE ? OR search_terms LIKE ?" for _ in like_terms
+                )
+                params: list[Any] = []
+                for term in like_terms:
+                    params.extend((f"%{term}%", f"%{term}%"))
                 if rule_terms:
                     rule_clause = " OR ".join("normalized_content LIKE ?" for _ in rule_terms)
                     clause += (
@@ -1039,6 +1268,10 @@ class MemoryStore:
                     f"SELECT * FROM memories WHERE state = 'active' AND ({clause})",
                     params,
                 ).fetchall()
+                # How rare a word is needs the size of the store it is rare in.
+                active_total = int(connection.execute(
+                    "SELECT COUNT(*) FROM memories WHERE state = 'active'"
+                ).fetchone()[0])
             else:
                 # Browsing with no query: rank order is the right answer, and a cap is
                 # honest because the caller asked for "recent and important".
@@ -1058,52 +1291,97 @@ class MemoryStore:
 
         scored: list[tuple[float, sqlite3.Row]] = []
         context_candidates: list[tuple[sqlite3.Row, set[str]]] = []
-        for row in rows:
-            if query_normalized:
-                content_terms = _content_terms(row["normalized_content"])
-                match = (
-                    len(query_terms & content_terms) / len(query_terms | content_terms)
-                    if (query_terms | content_terms)
-                    else 0.0
-                )
-                # Languages without spaces — Japanese, Chinese — put a whole sentence in
-                # one token, so a term never matches by equality and the memory becomes
-                # storable but unfindable. Fall back to substring containment, long
-                # enough not to make "cat" match "category".
-                matched = set(query_terms & content_terms)
+        if query_normalized:
+            # First pass: which query words each candidate holds, and how well.
+            held: list[dict[str, float]] = []
+            all_terms: list[frozenset[str]] = []
+            found_in = dict.fromkeys(query_terms, 0)
+            for row in rows:
                 normalized_row = str(row["normalized_content"])
-                for term in query_terms - matched:
-                    if len(term) >= 3 and term in normalized_row:
-                        matched.add(term)
-                coverage = len(matched) / len(query_terms) if query_terms else 0.0
+                terms = _match_terms(normalized_row)
+                keywords = str(row["search_terms"] or "")
+                if keywords:
+                    terms = terms | _match_terms(keywords)
+                    normalized_row = f"{normalized_row} {keywords}"
+                all_terms.append(terms)
+                matches: dict[str, float] = {}
+                for term in query_terms:
+                    if term in terms:
+                        matches[term] = 1.0
+                        continue
+                    best = max((_fuzzy(term, other) for other in terms), default=0.0)
+                    if best:
+                        matches[term] = best
+                    elif len(term) >= 3 and term in normalized_row:
+                        # Languages without spaces — Japanese, Chinese — put a whole
+                        # sentence in one token, so a term never matches by equality and
+                        # the memory becomes storable but unfindable. Containment also
+                        # finds a word inside a compound ("light" in "lighthouse").
+                        matches[term] = 1.0
+                held.append(matches)
+                for term in matches:
+                    found_in[term] += 1
+            total = max(active_total, len(rows), 1)
+            weight = {
+                term: math.log(1.0 + (total - count + 0.5) / (count + 0.5))
+                for term, count in found_in.items()
+            }
+            heaviest_found = max((weight[t] for t, count in found_in.items() if count), default=1.0)
+            # In a store of a handful of memories every word is "rare", so rarity says
+            # nothing and an absent word keeps its full weight: one shared word out of
+            # three ("pharmacy close" against "closes 4 November") is then not enough.
+            absent = ABSENT_WORD_WEIGHT if total >= SMALL_STORE else 1.0
+            for term, count in found_in.items():
+                if not count:
+                    weight[term] = min(weight[term], absent * heaviest_found)
+            total_weight = sum(weight.values()) or 1.0
+
+            for row, matches, content_terms in zip(rows, held, all_terms):
+                covered = sum(weight[term] * strength for term, strength in matches.items()) / total_weight
+                coverage = len(matches) / len(query_terms)
                 # Relevance has to clear the bar on its own. Importance used to be inside
                 # the threshold test, and at a typical importance of 0.85 its term alone
-                # (0.1 * 0.85 = 0.085) exceeded the 0.08 cut — so every stored memory was
-                # returned for every query, relevant or not. Importance now only breaks
-                # ties between memories that already matched.
-                relevance = (0.55 * match) + (0.35 * coverage)
-                if relevance < 0.12:
-                    if row["category"] in {"preference", "decision"} and rule_terms & content_terms:
-                        context_candidates.append((row, content_terms))
+                # exceeded the cut — so every stored memory was returned for every query,
+                # relevant or not. Importance now only breaks ties between memories that
+                # already matched.
+                # Holding half the query's words, and at least two of them, is a match
+                # whatever the weights say: in a small store one rare word can outweigh
+                # two shared ones ("daily standup 9am" against the 10am note).
+                dropped = covered < RELEVANCE_BAR and not (len(matches) >= 2 and coverage >= 0.5)
+                if not dropped and named and not (
+                    named & content_terms
+                    or any(_fuzzy(name, other) for name in named for other in content_terms)
+                ):
+                    # The question names something; this memory names none of it.
+                    dropped = True
+                row_numbers = _number_tokens(str(row["normalized_content"]))
+                exact = len(query_numbers & row_numbers) / len(query_numbers) if query_numbers else 0.0
+                if not dropped and query_numbers and row_numbers and not exact and len(matches) <= 1:
+                    # "bug 305" is not answered by the note about bug 212.
+                    dropped = True
+                if dropped:
+                    if row["category"] in {"preference", "decision"} and rule_terms & _content_terms(
+                        str(row["normalized_content"])
+                    ):
+                        context_candidates.append((row, _content_terms(str(row["normalized_content"]))))
                     continue
                 # Only a tiebreak: too small to pull an irrelevant memory over the bar,
                 # big enough to separate two memories that matched equally well.
                 score = (
-                    relevance
+                    (0.8 * covered)
+                    + (0.2 * coverage)
                     + (0.1 * float(row["importance"]))
                     + (0.08 * _shape_bonus(shape, flat(str(row["content"]))))
                 )
                 if query_numbers:
-                    row_numbers = _number_tokens(normalized_row)
-                    exact = len(query_numbers & row_numbers) / len(query_numbers)
                     score += 0.25 * exact
                     if row_numbers and not exact:
                         score -= 0.05
-                    if exact and len(query_normalized.split()) > 1 and query_padded in f" {normalized_row} ":
+                    if exact and len(query_normalized.split()) > 1 and query_padded in f" {row['normalized_content']} ":
                         score += 0.1
-            else:
-                score = float(row["importance"])
-            scored.append((score, row))
+                scored.append((score, row))
+        else:
+            scored = [(float(row["importance"]), row) for row in rows]
 
         # Supplement an actual answer, never invent one for an unmatched query.
         # Preferences live in the user's personal layer on Hosted. Decisions also
@@ -1113,7 +1391,7 @@ class MemoryStore:
         # read scope, including Hosted's user/project/organization RLS policies.
         if scored and context_candidates:
             direct_anchors = set().union(*(
-                query_terms & _content_terms(str(row["normalized_content"]))
+                query_terms & _match_terms(str(row["normalized_content"]))
                 for _, row in scored
             )) - rule_terms
             for row, terms in context_candidates:
@@ -1139,13 +1417,18 @@ class MemoryStore:
                     connection,
                     "RECALL",
                     None,
-                    f"Recalled {len(surfaced)} memories for: {query.strip() or 'recent memories'}",
+                    # The count, never the words. A search is the person's own text, and
+                    # this log outlives every memory it found: the query used to be written
+                    # here, where forgetting a memory could not reach it.
+                    f"Recalled {len(surfaced)} memories.",
                     content_bytes=recalled_bytes,
                     source="recall",
                 )
+                used_at = _now()
                 connection.executemany(
-                    "UPDATE memories SET recall_count = COALESCE(recall_count, 0) + 1 WHERE id = ?",
-                    [(row["id"],) for _, row in surfaced],
+                    "UPDATE memories SET recall_count = COALESCE(recall_count, 0) + 1, "
+                    "last_used_at = ? WHERE id = ?",
+                    [(used_at, row["id"]) for _, row in surfaced],
                 )
                 self._prune_recall_events(connection)
         return [
@@ -1252,6 +1535,11 @@ class MemoryStore:
                 (old_score, old_row), (new_score, _) = scored[old_pos], scored[new_pos]
                 if new_conf >= old_conf and old_score >= new_score:
                     scored[old_pos] = (new_score - 0.001, old_row)
+                elif new_conf < old_conf and new_score >= old_score:
+                    # The less trusted side stays below the one it disputes. Equal scores
+                    # used to fall to the newer one whenever the two saves were a second
+                    # apart, and to the older one when they were not.
+                    scored[new_pos] = (old_score - 0.001, scored[new_pos][1])
             if old_pos is not None:
                 if new_conf is not None and new_conf < old_conf:
                     note = (f"Conflict {cid} open: a newer, lower-confidence ({new_conf:.2f}) "
@@ -1944,6 +2232,10 @@ class MemoryStore:
                     "SELECT COUNT(*) FROM memory_relations WHERE status = 'open'"
                 ).fetchone()[0]
             )
+            # A permanent erase whose file could not be rewritten yet. Only the store on
+            # this computer has a file to rewrite; a backend without one never has this.
+            pending_erase = getattr(self._backend, "erase_unfinished", None)
+            erase_unfinished = bool(pending_erase(connection)) if pending_erase else False
             # The governance trail. Every number above this line -- counts, recall,
             # tokens -- is something any memory product can show. This is the part
             # that is only true of MemorySafe: a fact replaced by a later one, the
@@ -1952,7 +2244,12 @@ class MemoryStore:
             governance_rows = connection.execute(
                 """
                 SELECT r.id, r.decision, r.status, r.reason, r.evidence, r.created_at,
-                       o.content AS old_content, n.content AS new_content
+                       -- A forgotten side is named, never quoted: the trail showed the
+                       -- text of a memory the person had taken out of recall, on the
+                       -- dashboard and to any assistant that asked for health.
+                       CASE WHEN o.state = 'deleted' THEN NULL ELSE o.content END AS old_content,
+                       CASE WHEN n.state = 'deleted' THEN NULL ELSE n.content END AS new_content,
+                       CASE WHEN o.state = 'deleted' OR n.state = 'deleted' THEN 1 ELSE 0 END AS forgotten_side
                 FROM memory_relations r
                 LEFT JOIN memories o ON o.id = r.old_memory_id
                 LEFT JOIN memories n ON n.id = r.new_memory_id
@@ -2105,6 +2402,8 @@ class MemoryStore:
             "active_memories": total,
             "superseded_memories": superseded_count,
             "open_reviews": open_reviews,
+            "erase_unfinished": erase_unfinished,
+            "erase_status": ERASE_UNFINISHED_STATUS if erase_unfinished else "",
             "protected_memories": protected,
             "average_importance": round(average_importance, 3),
             "average_confidence": round(average_confidence, 3),
@@ -2159,7 +2458,8 @@ class MemoryStore:
                     "decision": str(row["decision"]),
                     "status": str(row["status"]),
                     "reason": str(row["reason"] or ""),
-                    "evidence": str(row["evidence"] or ""),
+                    # The evidence quotes both values, so it goes with a forgotten side.
+                    "evidence": "" if row["forgotten_side"] else str(row["evidence"] or ""),
                     "created_at": str(row["created_at"] or ""),
                     "replaced": str(row["old_content"] or ""),
                     "kept": str(row["new_content"] or ""),
@@ -2170,6 +2470,7 @@ class MemoryStore:
             "conflict_penalty": conflict_penalty,
             "evicted_memories": evicted_count,
             "max_active": _max_active(),
+            "plan": self._plan_summary(),
             "formula_note": (
                 "The score rates the quality of what is stored. It deliberately says nothing "
                 "about whether anything is still arriving -- read capture_freshness for that."

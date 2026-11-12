@@ -40,6 +40,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Callable, Mapping
 
 from .device import read_private_json, utc_now, write_private_json
+from .storage_mode import HOSTED, read_storage_mode
 from .migrate import (
     PLUGIN_ID,
     claude_code_plugin_installed,
@@ -443,6 +444,10 @@ def auto_connect_on_start(
     """
 
     if read_auto_connect(state_dir) is not True:
+        return []
+    if read_storage_mode(state_dir) == HOSTED:
+        # The person chose their hosted account. Their old yes to this question was a yes
+        # to the local plugin, so acting on it now would install what they decided against.
         return []
     return _connect_unsettled(state_dir, _settled(state_dir), home, env, platform, runner)
 

@@ -515,6 +515,34 @@ def _database_check(paths: DoctorPaths) -> dict[str, Any]:
     )
 
 
+def _erase_check(paths: DoctorPaths) -> dict[str, Any] | None:
+    """A warning while a permanent erase waits for the store's file to be rewritten; nothing
+    otherwise. The erase said so once, when it happened; this keeps saying so until it is done."""
+
+    from .backends.sqlite import ERASE_UNFINISHED
+
+    if not paths.database_path.is_file():
+        return None
+    try:
+        connection = sqlite3.connect(f"file:{paths.database_path}?mode=ro", uri=True, timeout=2)
+        try:
+            pending = connection.execute(
+                "SELECT 1 FROM settings WHERE key = ?", (ERASE_UNFINISHED,)
+            ).fetchone()
+        finally:
+            connection.close()
+    except (sqlite3.Error, OSError):
+        return None  # the database check reports a store that cannot be read
+    if pending is None:
+        return None
+    return _check(
+        "erase",
+        "warning",
+        "An erase is waiting for the store's file to be rewritten.",
+        hint="Run `memorysafe erase --finish` when the assistants are idle.",
+    )
+
+
 def _configuration_check(paths: DoctorPaths) -> dict[str, Any]:
     """Tunnel wiring. Only meaningful where the ChatGPT connector is installed."""
     config = paths.install_root / "config" / "tunnel-client" / "memorysafe-runtime.json"
@@ -753,15 +781,46 @@ def _capture_hook_check(plugin_root: Path | None = None) -> dict[str, Any] | Non
     )
 
 
+def _device_link_check(paths: DoctorPaths) -> dict[str, Any] | None:
+    """In hosted mode, whether this computer is signed in to the account. None in local mode:
+    the link does not exist there and nothing should mention it. Never a token in the details."""
+
+    from . import device_link, storage_mode
+
+    if storage_mode.read_storage_mode(paths.state_dir) != storage_mode.HOSTED:
+        return None
+    link = device_link.status(paths.state_dir)
+    if not link.get("linked"):
+        return _check("device_link", "warning", device_link.NOT_LINKED, storage_mode="hosted", linked=False)
+    if link.get("stale"):
+        return _check("device_link", "warning", device_link.SIGN_IN_AGAIN, storage_mode="hosted", linked=True, stale=True,
+                      last_refreshed_at=link.get("last_refreshed_at") or link.get("linked_at"))
+    return _check(
+        "device_link",
+        "pass",
+        "This computer is signed in to your hosted account.",
+        storage_mode="hosted",
+        linked=True,
+        linked_at=link.get("linked_at"),
+        last_refreshed_at=link.get("last_refreshed_at"),
+    )
+
+
 def run_doctor(install_root: Path | None = None) -> dict[str, Any]:
     paths = DoctorPaths.from_install_root(install_root)
     layout = detect_layout(paths.install_root)
 
     checks = [_layout_check(paths, layout)]
+    device_link_check = _device_link_check(paths)
+    if device_link_check is not None:
+        checks.append(device_link_check)
     if layout.runtimes:
         checks.append(_installation_check(paths, layout))
         checks.append(_memory_directory_check(paths))
         checks.append(_database_check(paths))
+        erase_check = _erase_check(paths)
+        if erase_check is not None:
+            checks.append(erase_check)
         chatgpt_configured = True
         if layout.has_chatgpt:
             configuration = _configuration_check(paths)
@@ -838,6 +897,14 @@ _REMEDIES: dict[str, dict[str, str]] = {
         "error": (
             "The memory database could not be read. Do not reinstall yet: a backup copy "
             "may exist in the backups folder and reinstalling will not repair the file."
+        ),
+    },
+    "erase": {
+        "warning": (
+            "A permanent erase removed the memory, but the store's file could not be rewritten "
+            "at the time, so traces of the erased text may remain in that file. Run "
+            "`memorysafe erase --finish` when the assistants are idle; the dashboard also tries "
+            "it each time it starts. Until it succeeds, no snapshot of the store is taken."
         ),
     },
     "configuration": {

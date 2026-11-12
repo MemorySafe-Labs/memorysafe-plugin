@@ -10,7 +10,7 @@ starts behind it.
 from __future__ import annotations
 
 
-VERSION = "0.4.32"
+VERSION = "0.5.0"
 PROTOCOL_VERSION = "2024-11-05"
 
 SERVER_INSTRUCTIONS = (
@@ -19,7 +19,9 @@ SERVER_INSTRUCTIONS = (
     "if asked. (2) Open http://127.0.0.1:8765/dashboard on this computer. (3) Prove the store: "
     "remember one durable fact, then find it. Automatic capture stays off until they ask to "
     "turn it on or use the dashboard toggle. One local file is shared by Claude Desktop, "
-    "Claude Code and Codex. Nothing is uploaded. Do not claim MemorySafe reads chats by itself. "
+    "Claude Code and Codex. Nothing is uploaded unless the person chose 'In my hosted account' on "
+    "the dashboard and signed in; then this computer talks to their own account at "
+    "memory.memorysafe.ca and the dashboard says so. Do not claim MemorySafe reads chats by itself. "
     "When automatic mode is on and the user states durable facts — a deadline, a decision, "
     "who someone is, a preference, a constraint — call memorysafe_auto_capture once with all "
     "of them. Duplicates merge. Nothing is pruned for being old or low-value. Never capture "
@@ -72,6 +74,13 @@ TOOLS = [
                     "default": "other",
                     "description": "Kind of memory.",
                 },
+                "keywords": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 8,
+                    "default": [],
+                    "description": "3-6 other words it might be searched by (synonyms, topic), not already in it.",
+                },
             },
             ["content"],
         ),
@@ -90,10 +99,7 @@ TOOLS = [
         "name": "memorysafe_auto_capture",
         "title": "Capture durable memories",
         "description": (
-            "Save the durable facts the user just stated — all of them in one call, only while "
-            "automatic mode is on. Duplicates merge. Nothing is dropped for being old or low-value. "
-            "Never ask first. Never pass whole messages, inferences, secrets, IDs, contacts, "
-            "addresses or health data."
+            "Save the durable facts the user just stated — all of them in one call, only while automatic mode is on. Duplicates merge. Nothing stored is dropped for being old or low-value. Never ask first. Never pass whole messages, inferences, secrets, IDs, contacts, addresses or health data."
         ),
         "inputSchema": _object(
             {
@@ -109,6 +115,13 @@ TOOLS = [
                     "enum": CATEGORIES,
                     "default": "other",
                     "description": "Kind of memory.",
+                },
+                "keywords": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 3,
+                    "default": [],
+                    "description": "Per fact, in order: 3-6 other words it might be searched by (synonyms, topic), not already in it, comma-separated.",
                 },
             },
             ["facts"],
@@ -286,12 +299,7 @@ TOOLS = [
         "name": "memorysafe_doctor",
         "title": "Diagnose a MemorySafe install",
         "description": (
-            "Check this MemorySafe installation and say what to do about anything wrong. "
-            "Call this whenever the user says MemorySafe is not working, memories seem "
-            "missing, or a fresh install does not respond -- and before suggesting a "
-            "reinstall. Read-only: it inspects the installation, never memory contents, "
-            "and changes nothing. Read 'next_actions' out in plain language and work "
-            "through them in order; do not read the raw checks to the user."
+            "Check this MemorySafe installation when it is not working, memories seem missing or a fresh install does not respond, before suggesting a reinstall. Read-only; never reads memory contents. Read 'next_actions' out in plain language, in order, not the raw checks."
         ),
         "inputSchema": _object({}),
         "annotations": _annotations(read_only=True, destructive=False, idempotent=True),
@@ -300,12 +308,7 @@ TOOLS = [
         "name": "memorysafe_health",
         "title": "Show memory health",
         "description": (
-            "Show local memory counts, storage, governance decisions and the health formula. "
-            "Call this first when the user just installed MemorySafe or asks how to set it up, "
-            "then walk them through restart, the dashboard at http://127.0.0.1:8765/dashboard, "
-            "and one remember-then-find. Pass open=true to also open the visual dashboard; if "
-            "the returned 'opened' is 'window' or 'browser', say it opened rather than pasting "
-            "the link."
+            "Show local memory counts, storage, governance decisions and the health formula. Call it first when the user asks how to set it up. Pass open=true to also open the visual dashboard; if the returned 'opened' is 'window' or 'browser', say it opened rather than pasting the link."
         ),
         "inputSchema": _object(
             {

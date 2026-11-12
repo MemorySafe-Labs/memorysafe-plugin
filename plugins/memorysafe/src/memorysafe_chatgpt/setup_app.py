@@ -17,10 +17,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from collections.abc import Mapping
 from typing import Any
-from urllib.parse import quote, urlencode, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 from . import agents as agents_module
 from . import dashboard_record
+from . import erase as erase_module
+from . import client_identity
+from . import device_link as device_link_module
+from . import storage_mode as storage_mode_module
 from .bootstrap_catalog import VERSION
 from .dashboard import dashboard_html, panel_html
 from .doctor import create_support_bundle, find_support_bundle, run_doctor
@@ -137,6 +141,46 @@ def consent_payload(paths: SetupPaths) -> dict[str, Any]:
     return read_private_json(paths.state_dir / "consent.json")
 
 
+def _active_count(paths: SetupPaths) -> int:
+    """How many memories are on this computer, for the dashboard to say at a mode switch.
+    No store yet means none; never opens or creates one to find out."""
+
+    if not Path(paths.database_path).is_file():
+        return 0
+    try:
+        import sqlite3
+        from contextlib import closing
+
+        # `with sqlite3.connect(...)` commits but never closes: on Windows the handle it
+        # left open kept the store's file locked against a move or a delete.
+        # as_uri() escapes a path holding #, ? or %, which a hand-built file: URI did not.
+        with closing(sqlite3.connect(f"{Path(paths.database_path).resolve().as_uri()}?mode=ro", uri=True)) as connection:
+            return int(connection.execute("SELECT COUNT(*) FROM memories WHERE state = 'active'").fetchone()[0])
+    except sqlite3.Error:
+        return 0
+
+
+def _assistants_payload(paths: SetupPaths, **extra: Any) -> dict[str, Any]:
+    """What the assistants panel renders from: the inventory, the one-time answer, the mode,
+    the device link (never a token) and how many memories are here."""
+
+    return {
+        "agents": agents_module.inventory(),
+        "auto_connect": agents_module.read_auto_connect(paths.state_dir),
+        "storage_mode": storage_mode_module.read_storage_mode(paths.state_dir),
+        "device_link": device_link_module.status(paths.state_dir),
+        "local_memories": _active_count(paths),
+        **extra,
+    }
+
+
+CALLBACK_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>MemorySafe</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{font-family:-apple-system,system-ui,sans-serif;background:#0b1220;color:#e6edf3;display:grid;place-items:center;min-height:100vh;margin:0}
+main{max-width:28rem;padding:2rem;text-align:center}h1{font-size:1.25rem;margin:0 0 .5rem}p{color:#9fb0c3;line-height:1.5}</style></head>
+<body><main><h1>{title}</h1><p>{body}</p></main></body></html>"""
+
+
 def status_payload(paths: SetupPaths) -> dict[str, Any]:
     identity = ensure_device_identity(paths.state_dir)
     consent = consent_payload(paths)
@@ -184,7 +228,27 @@ def dashboard_payload(paths: SetupPaths) -> dict[str, Any]:
     payload["version"] = VERSION
     payload["terms_update_pending"] = bool(consent.get("terms_accepted")) and not accepted_the_current_documents(consent)
     payload["legal_change_note"] = LEGAL_CHANGE_NOTE
+    payload["local_plan"] = local_plan_payload(paths, payload)
     return payload
+
+
+def local_plan_payload(paths: SetupPaths, health: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
+    """This computer's plan for the dashboard: its name, how full the store is and when the
+    key runs out. None while local storage has no limit, so the panel stays out of sight."""
+
+    from . import plans
+
+    plan = plans.local_plan(paths.database_path)
+    if not plan["enforced"]:
+        return None
+    if health is None:
+        health = MemoryStore(paths.database_path).health()
+    return {
+        "plan": plan["plan"],
+        "used": int(health.get("active_memories", 0)),
+        "limit": plan["limit"],
+        "expires_at": plan["expires_at"],
+    }
 
 
 # Where a report goes. Nothing is sent from here: the dashboard opens an email draft
@@ -534,8 +598,13 @@ class SetupHandler(BaseHTTPRequestHandler):
         token = self.headers.get("X-MemorySafe-Setup-Token", "")
         return self._loopback_request() and secrets.compare_digest(token, self.setup_token)
 
-    def _read_json(self) -> dict[str, Any]:
-        length = min(int(self.headers.get("Content-Length", "0")), 16_384)
+    # Every setup request is a few fields, except an uploaded move file, which holds the
+    # person's memories: 20,000 (transfer.MAX_IMPORT) at a generous 1,500 bytes each.
+    JSON_LIMIT = 16_384
+    IMPORT_LIMIT = 32 * 1024 * 1024
+
+    def _read_json(self, limit: int = JSON_LIMIT) -> dict[str, Any]:
+        length = min(int(self.headers.get("Content-Length", "0")), limit)
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -585,12 +654,34 @@ class SetupHandler(BaseHTTPRequestHandler):
             if not self._loopback_request():
                 self._json({"error": "The dashboard is available only on this computer."}, 403)
                 return
-            self._json(
-                {
-                    "agents": agents_module.inventory(),
-                    "auto_connect": agents_module.read_auto_connect(self.paths.state_dir),
-                }
-            )
+            self._json(_assistants_payload(self.paths))
+            return
+        if path == client_identity.CALLBACK_PATH:
+            # The browser comes back here from the hosted sign-in with a code and the state
+            # the dashboard started with. No page token: a redirect cannot carry a header.
+            # The state is what ties this request to a sign-in this process began, and the
+            # code is useless without the PKCE verifier only this process holds.
+            if not self._loopback_request():
+                self._json({"error": "The dashboard is available only on this computer."}, 403)
+                return
+            query = parse_qs(urlparse(self.path).query)
+            first = {key: values[0] for key, values in query.items() if values}
+            if first.get("error"):
+                title, body, status = "Sign-in did not finish", "Your hosted account did not complete the sign-in. Close this tab and try again from the dashboard.", 400
+            else:
+                try:
+                    if storage_mode_module.read_storage_mode(self.paths.state_dir) != storage_mode_module.HOSTED:
+                        raise device_link_module.LinkError(
+                            "Memories are set to live on this computer, so nothing was signed in. "
+                            "Choose “In my hosted account” on the dashboard first.", linked=False)
+                    device_link_module.finish_sign_in(
+                        self.paths.state_dir, code=first.get("code", ""), state=first.get("state", ""), iss=first.get("iss")
+                    )
+                    title, body, status = "Signed in", "This computer is signed in to your hosted account. You can close this tab and go back to the MemorySafe dashboard.", 200
+                except device_link_module.LinkError as error:
+                    title, body, status = "Sign-in did not finish", str(error), 400
+            page = CALLBACK_PAGE.replace("{title}", html.escape(title)).replace("{body}", html.escape(body))
+            self._send(page.encode("utf-8"), "text/html; charset=utf-8", status)
             return
         if path == "/api/doctor":
             if not self._loopback_request():
@@ -625,7 +716,7 @@ class SetupHandler(BaseHTTPRequestHandler):
             self._json({"error": "The local setup session expired. Refresh the page."}, 403)
             return
         try:
-            payload = self._read_json()
+            payload = self._read_json(self.IMPORT_LIMIT if path == "/api/import" else self.JSON_LIMIT)
             if path == "/api/consent":
                 save_consent(
                     self.paths,
@@ -699,6 +790,18 @@ class SetupHandler(BaseHTTPRequestHandler):
                 from . import transfer
                 from .storage import MemoryStore
 
+                # In hosted mode the file here is the memories that stayed behind, not what
+                # the assistants use; moving them is a local-mode act, like importing is.
+                if storage_mode_module.read_storage_mode(self.paths.state_dir) == storage_mode_module.HOSTED:
+                    self._json(
+                        {
+                            "error": "Memories are set to live in your hosted account on this computer. "
+                            "To move what is still here, choose “On this computer” first, export, "
+                            "then choose your hosted account again."
+                        },
+                        409,
+                    )
+                    return
                 store = MemoryStore(self.paths.database_path)
                 self._json({"ok": True, **transfer.write_dashboard_export(store, self.paths.state_dir)})
                 return
@@ -719,6 +822,29 @@ class SetupHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(data)
                 return
+            elif path == "/api/import":
+                # The way back from Hosted: the account data page's download is the same v1
+                # move file `memorysafe import` reads, and this is that command behind a
+                # button. The body IS the file (the page reads it in the browser; no path
+                # from the request touches the disk). Every memory goes through remember(),
+                # so duplicates merge and conflicts are flagged, never silently. In hosted
+                # mode the local store is not written: choosing one place is the rule.
+                from . import transfer
+                from .storage import MemoryStore
+
+                if storage_mode_module.read_storage_mode(self.paths.state_dir) == storage_mode_module.HOSTED:
+                    self._json(
+                        {
+                            "error": "Memories are set to live in your hosted account on this computer. "
+                            "Choose “On this computer” first, then import the file."
+                        },
+                        409,
+                    )
+                    return
+                memories = transfer.parse_export(payload)  # ValueError names the first problem
+                store = MemoryStore(self.paths.database_path)
+                self._json({"ok": True, **transfer.import_memories(store, memories)})
+                return
             elif path == "/api/agents/connect":
                 # Runs an assistant's own plugin installer. The token check above is what
                 # stops another website from triggering it: only this dashboard's page can
@@ -737,6 +863,51 @@ class SetupHandler(BaseHTTPRequestHandler):
                         "auto_connect": agents_module.read_auto_connect(self.paths.state_dir),
                     }
                 )
+                return
+            elif path == "/api/plan":
+                # A plan key from the account page, kept on this computer, or taken off it.
+                # The key is checked here against the public key this build carries: nothing
+                # is sent anywhere, and a key that does not check out is never stored.
+                from . import plans
+
+                folder = plans.state_dir_for(self.paths.database_path)
+                if payload.get("remove") is True:
+                    plans.remove_key(folder)
+                else:
+                    plans.store_key(folder, str(payload.get("key", "")))  # ValueError says why not
+                self._json({"ok": True, "local_plan": local_plan_payload(self.paths)})
+                return
+            elif path == "/api/storage-mode":
+                # The person's one choice of where memories live: local or hosted. The
+                # record changes what the assistants panel offers and stops the start-up
+                # auto-connect in hosted mode; it moves no memories and connects nothing.
+                mode = payload.get("mode")
+                if mode not in storage_mode_module.MODES:
+                    self._json({"error": "Choose local or hosted."}, 400)
+                    return
+                storage_mode_module.write_storage_mode(self.paths.state_dir, str(mode))
+                signed_out = None
+                if mode == storage_mode_module.LOCAL:
+                    # Coming home signs the device link out: a token must not sit on a
+                    # computer whose owner decided memories no longer live in the account.
+                    # A sign-in still open in a browser tab must not finish after this either.
+                    device_link_module.forget_pending_sign_ins()
+                    signed_out = device_link_module.sign_out(self.paths.state_dir)
+                self._json(_assistants_payload(self.paths, ok=True, signed_out=signed_out))
+                return
+            elif path == "/api/link/start":
+                # Sign this computer in to the person's hosted account: the page opens the URL
+                # this returns, the browser comes back to /callback. Only in hosted mode, so
+                # a sign-in never exists beside memories that live here.
+                if storage_mode_module.read_storage_mode(self.paths.state_dir) != storage_mode_module.HOSTED:
+                    self._json({"error": "Choose “In my hosted account” first, then sign in."}, 409)
+                    return
+                port = self.server.server_address[1]
+                self._json({"ok": True, **device_link_module.begin_sign_in(port)})
+                return
+            elif path == "/api/link/signout":
+                result = device_link_module.sign_out(self.paths.state_dir)
+                self._json(_assistants_payload(self.paths, ok=True, signed_out=result))
                 return
             elif path == "/api/agents/decision":
                 # The one-time "connect your other assistants too?" answer. Yes connects
@@ -851,7 +1022,14 @@ def _snapshot_on_start(paths: SetupPaths) -> None:
     """
 
     try:
-        MemoryStore(paths.database_path).snapshot()
+        store = MemoryStore(paths.database_path)
+        if erase_module.unfinished(store):
+            # An erase whose file could not be rewritten: try again now, before any copy.
+            # `finish` takes the snapshot itself once the rewrite has worked; if it has not,
+            # there is no snapshot this time and the next start tries again.
+            erase_module.finish(store, quick=True)
+        else:
+            store.snapshot()
     except Exception:
         pass  # a backup that prevents startup would be worse than no backup
 

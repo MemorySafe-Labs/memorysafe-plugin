@@ -108,6 +108,9 @@ def _print_matches(query: str, matches: list[dict]) -> None:
 
 
 def _print_written(result: dict) -> None:
+    if result["decision"] == "FULL":
+        print(f"FULL  {result['reason']}")
+        return
     print(f"{result['decision']}  {result['memory_id']}")
     print(_indent(result['content'], "  ") + "\n")
     print(f"  Category:   {result['category']}")
@@ -446,7 +449,61 @@ def main() -> None:
         help="Also delete the memories. A copy of the database is saved to your home folder first.",
     )
     uninstall.add_argument("--json", action="store_true", dest="as_json")
+    # Permanent, so it is a command and the dashboard, never an MCP tool: an assistant
+    # acting on a misread request, or on text someone else put into the conversation, must
+    # not be able to erase for good.
+    erase = subparsers.add_parser(
+        "erase",
+        help="Erase a memory for good (unlike forget, it cannot be restored). Changes nothing without --confirm.",
+    )
+    erase.add_argument("memory_id", nargs="?")
+    erase.add_argument("--confirm", action="store_true")
+    erase.add_argument(
+        "--everything",
+        metavar="PHRASE",
+        help='Erase every memory on this computer. PHRASE must be "erase everything".',
+    )
+    erase.add_argument("--finish", action="store_true", help="Rewrite the file after an erase that could not.")
+    erase.add_argument("--receipts", action="store_true", help="List this computer's erasure receipts.")
+    erase.add_argument("--json", action="store_true", dest="as_json")
+    plan = subparsers.add_parser(
+        "plan",
+        help="Show this computer's plan and how full the store is; --key stores a plan key from your account page.",
+    )
+    plan.add_argument("--key", help="The plan key to keep on this computer.")
+    plan.add_argument("--remove", action="store_true", help="Remove the stored plan key (back to the free plan).")
+    plan.add_argument("--json", action="store_true", dest="as_json")
+    latency = subparsers.add_parser(
+        "hosted-latency",
+        help="Measure what hosted mode adds to a memory call (reads only; needs hosted mode and a sign-in).",
+    )
+    latency.add_argument("--samples", type=int, default=20)
+    latency.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args()
+
+    if args.command == "hosted-latency":
+        from . import device_link, hosted_proxy
+        from .storage import MemoryStore
+
+        if not hosted_proxy.active():
+            print("This computer is in local mode; hosted mode adds nothing to measure.", file=sys.stderr)
+            raise SystemExit(2)
+        local = MemoryStore(_resolve_database(args.install_root))
+        try:
+            report = hosted_proxy.measure(lambda: local.review_conflicts(False), samples=args.samples)
+        except (device_link.LinkError, hosted_proxy.HostedError) as error:
+            print(str(error), file=sys.stderr)
+            raise SystemExit(1) from None
+        if args.as_json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            verdict = "within" if report["within_stop_line"] else "OVER"
+            print(
+                f"{report['samples']} finds: local median {report['local_median_ms']} ms, hosted median "
+                f"{report['hosted_median_ms']} ms (slowest {report['hosted_slowest_ms']} ms). Hosted mode adds "
+                f"{report['added_median_ms']} ms, {verdict} the {report['stop_line_ms']} ms stop line."
+            )
+        return
 
     if args.command == "doctor":
         report = run_doctor(args.install_root)
@@ -573,6 +630,72 @@ def main() -> None:
             print(json.dumps(result, indent=2, sort_keys=True))
         else:
             _print_import(result)
+        return
+
+    if args.command == "plan":
+        from datetime import timezone as _timezone
+
+        from . import plans
+        from .storage import MemoryStore
+
+        database = _resolve_database(args.install_root)
+        folder = plans.state_dir_for(database)
+        if args.key:
+            try:
+                plans.store_key(folder, args.key)
+            except ValueError as problem:
+                raise SystemExit(str(problem)) from None
+        elif args.remove:
+            plans.remove_key(folder)
+        report = plans.local_plan(database)
+        report["used"] = MemoryStore(database).health()["active_memories"] if database.is_file() else 0
+        if args.as_json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        elif not report["enforced"]:
+            print(f"{report['used']:,} active memories. This version has no limit on local storage.")
+        else:
+            until = ""
+            if report["expires_at"]:
+                until = f" (key valid until {datetime.fromtimestamp(report['expires_at'], _timezone.utc):%d %B %Y})"
+            print(f"Plan: {report['plan']}{until}. {report['used']:,} of {report['limit']:,} active memories.")
+            if report["plan"] == plans.FREE:
+                print("A paid plan holds more. Enter the plan key you received with it: memorysafe plan --key <key>")
+        return
+
+    if args.command == "erase":
+        from . import device, erase as erasing, transfer
+        from .storage import MemoryStore
+
+        database = _resolve_database(args.install_root)
+        exports = (transfer.export_dir(device.default_state_dir()),)
+        if args.everything is not None:
+            result = erasing.erase_everything(database, args.everything, export_dirs=exports)
+        elif not database.is_file():
+            raise SystemExit("There is no MemorySafe store on this computer to erase from.")
+        elif args.receipts:
+            result = {"receipts": erasing.receipts(MemoryStore(database))}
+        elif args.finish:
+            result = erasing.finish(MemoryStore(database), export_dirs=exports)
+        elif not args.memory_id:
+            raise SystemExit("Name the memory to erase (its id), or use --everything, --finish or --receipts.")
+        else:
+            result = erasing.erase_memory(MemoryStore(database), args.memory_id, confirm=args.confirm, export_dirs=exports)
+        if args.as_json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        elif "receipts" in result:
+            for receipt in result["receipts"]:
+                print(f"{receipt['erased_at']}  {receipt.get('memory_id', 'everything')}  receipt {receipt['receipt_id']}")
+            if not result["receipts"]:
+                print("Nothing has been erased from this store.")
+        elif "reason" in result:
+            print(result["reason"])
+            for name, count in (result.get("would_delete") or {}).items():
+                print(f"  {name.replace('_', ' ')}: {count}")
+            if result.get("receipt"):
+                print(f"Receipt {result['receipt']['receipt_id']} (no memory text in it).")
+        else:
+            print("The file was rewritten." if result.get("file_rewritten")
+                  else "The file could not be rewritten yet; try again when the assistants are idle.")
         return
 
     if args.command == "explain":

@@ -89,6 +89,7 @@ def dashboard_html(
     .support-result a { color: var(--cyan); }
     .hosted-text { margin: 0 0 10px; color: var(--muted); font-size: 14px; line-height: 1.5; }
     .hosted-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 0 0 10px; }
+    .plan-key { flex: 1 1 280px; min-width: 0; padding: 9px 11px; border: 1px solid rgba(255,255,255,.14); border-radius: 9px; background: transparent; color: inherit; font: inherit; }
     .report-form { margin: 0 0 10px; padding: 11px 12px; border: 1px solid rgba(25,228,233,.35); border-radius: 9px; background: rgba(25,228,233,.06); }
     .report-form label { display: block; color: #dce5ed; font-size: 15px; font-weight: 700; }
     .report-form label span { display: block; margin-top: 3px; color: var(--dim); font-size: 14px; font-weight: 400; }
@@ -213,6 +214,21 @@ def dashboard_html(
     .agents-no:hover, .agents-link:hover { color: var(--text); border-color: rgba(25,228,233,.38); }
     .agents-link { padding: 1px 6px; margin-left: 4px; }
     .agents-auto { margin: 9px 0 0; color: var(--dim); font-size: 14px; }
+    .agents-mode { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; margin-bottom: 9px; }
+    .agents-mode-label { color: var(--dim); font: 700 14px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+    .agents-mode-choice { border: 1px solid var(--border); background: transparent; color: var(--muted);
+      font: 700 14px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .09em; text-transform: uppercase;
+      padding: 4px 9px; border-radius: 5px; cursor: pointer; }
+    .agents-mode-choice:hover { color: var(--text); border-color: rgba(25,228,233,.38); }
+    .agents-mode-choice.on { color: var(--cyan); border-color: rgba(25,228,233,.45); background: rgba(25,228,233,.08); cursor: default; }
+    .agents-mode-choice:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+    .agents-hosted { margin: 0 0 9px; padding: 11px 12px; border-radius: 9px; border: 1px solid var(--border); color: var(--dim); font-size: 14px; }
+    .agents-hosted p { margin: 0; }
+    .agents-hosted a { color: var(--cyan); }
+    .agents-hosted #agents-local-count { margin: 8px 0 0; color: var(--muted); }
+    .agents-link { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--border); }
+    .agents-link p { margin: 0 0 8px; color: var(--text); }
+    .agents-link small { display: block; margin-top: 6px; color: var(--muted); line-height: 1.4; }
     .agents-message { margin: 9px 0 0; color: #9fcdb0; font-size: 14px; overflow-wrap: anywhere; }
     .agents-message.bad { color: var(--amber); }
     .token-panel { margin-top: 10px; background: linear-gradient(145deg, rgba(75,131,255,.07), rgba(25,228,233,.025) 62%, var(--surface)); }
@@ -351,6 +367,29 @@ def dashboard_html(
     </section>
     <section class="panel agents-panel" id="agents-panel" aria-label="Your assistants" hidden>
       <div class="panel-title"><strong>One memory, every assistant</strong><span id="agents-note">ON THIS COMPUTER</span></div>
+      <div class="agents-mode" id="agents-mode" hidden>
+        <span class="agents-mode-label">MEMORIES LIVE</span>
+        <button class="agents-mode-choice" id="mode-local" type="button">On this computer</button>
+        <button class="agents-mode-choice" id="mode-hosted" type="button">In my hosted account</button>
+      </div>
+      <div class="agents-hosted" id="agents-hosted" hidden>
+        <p>Each assistant connects to your account from its own settings; the steps are on
+        <a href="https://memory.memorysafe.ca/connect" target="_blank" rel="noopener">your hosted Connect page</a>.
+        This choice moves no memories: to take the ones on this computer with you, export them below and
+        import the file on your account page. The way back works too: download the move file from your
+        account page, set memories to live on this computer again, and import it below.</p>
+        <p>The numbers and memories on this page are still the ones left on this computer. Your account's are on
+        <a href="https://memory.memorysafe.ca/account" target="_blank" rel="noopener">your account page</a>.</p>
+        <p id="agents-local-count" hidden></p>
+        <div class="agents-link" id="agents-link">
+          <p id="agents-link-text"></p>
+          <div class="agents-ask-actions">
+            <button class="agent-connect" id="link-signin" type="button">Sign in to your account</button>
+            <button class="agents-no" id="link-signout" type="button" hidden>Sign out</button>
+          </div>
+          <small id="agents-link-note"></small>
+        </div>
+      </div>
       <div class="agents-ask" id="agents-ask" hidden>
         <p id="agents-ask-text"></p>
         <div class="agents-ask-actions">
@@ -372,6 +411,25 @@ def dashboard_html(
         <a class="agents-link" href="https://memory.memorysafe.ca/account/start?signup=1&amp;next=/account/import&amp;lang=en" target="_blank" rel="noopener">Create a free Hosted account</a>
       </div>
       <div class="support-result" id="hosted-result" role="status"></div>
+      <p class="hosted-text hosted-return">Coming back from Hosted? Download the move file from
+        <a href="https://memory.memorysafe.ca/account/export" target="_blank" rel="noopener">your account page</a>,
+        then choose it here. Memories already on this computer are kept: duplicates merge, and a conflict is flagged
+        for you to decide. Nothing on your account changes.</p>
+      <div class="hosted-actions">
+        <input id="hosted-import-file" type="file" accept="application/json,.json" hidden>
+        <button class="agent-connect" id="hosted-import" type="button">Import a move file</button>
+      </div>
+      <div class="support-result" id="hosted-import-result" role="status"></div>
+    </section>
+    <section class="panel hosted-panel" id="plan-panel" aria-label="Your plan" hidden>
+      <div class="panel-title"><strong>Your plan</strong><span id="plan-note"></span></div>
+      <p class="hosted-text" id="plan-text"></p>
+      <div class="hosted-actions">
+        <input class="plan-key" id="plan-key" type="text" autocomplete="off" spellcheck="false" placeholder="Plan key from your account page" aria-label="Plan key">
+        <button class="agent-connect" id="plan-save" type="button">Use this key</button>
+        <button class="agent-connect" id="plan-remove" type="button" hidden>Remove the key</button>
+      </div>
+      <div class="support-result" id="plan-result" role="status"></div>
     </section>
     <details class="panel token-panel fold-panel" aria-label="Tokens with and without MemorySafe">
       <summary><strong>With vs without MemorySafe</strong><span class="token-badge">THIS STORE · THIS TURN</span></summary>
@@ -777,8 +835,30 @@ def dashboard_html(
       }
     }
 
+    // The local store's plan. Out of sight while local storage has no limit (local_plan is
+    // null), and on the hosted page, which never sends it.
+    function renderPlan(plan) {
+      const panel = byId("plan-panel");
+      if (!panel) return;
+      panel.hidden = !plan;
+      if (!plan) return;
+      const name = plan.plan === "free" ? "Free" : "Paid";
+      const used = number(plan.used).toLocaleString();
+      const limit = number(plan.limit).toLocaleString();
+      setText("plan-note", `${name.toUpperCase()} · ${used} OF ${limit}`);
+      let text = `${name} plan: ${used} of ${limit} memories. A full store stops accepting new memories and tells you; nothing is removed to make room.`;
+      if (plan.expires_at) {
+        text += ` Your plan key is valid until ${new Date(plan.expires_at * 1000).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}; get a new one from your account page before then.`;
+      } else {
+        text += " A paid plan holds more: paste the plan key from your account page.";
+      }
+      setText("plan-text", text);
+      byId("plan-remove").hidden = plan.plan === "free";
+    }
+
     function render(payload) {
       const data = unwrap(payload);
+      renderPlan(data.local_plan ?? null);
       const comparison = data.comparison ?? {};
       const recall = data.recall ?? {};
       const liveTokens = data.live_token_metrics ?? {};
@@ -939,21 +1019,34 @@ def dashboard_html(
       return node;
     }
 
-    function renderAgents(agents, autoConnect) {
+    let storageMode = "local";
+
+    function renderAgents(agents, autoConnect, mode) {
       // Installing MemorySafe in one assistant used to leave the others to be found and
       // installed one guide at a time. This panel lists every assistant on the computer
       // and connects the rest from here, each through its own installer.
+      if (mode === "local" || mode === "hosted") storageMode = mode;
+      const hostedMode = storageMode === "hosted";
       const panel = byId("agents-panel");
       const list = byId("agents");
       if (!Array.isArray(agents) || !agents.length) { panel.hidden = true; return; }
       panel.hidden = false;
+      byId("agents-mode").hidden = false;
+      byId("mode-local").classList.toggle("on", !hostedMode);
+      byId("mode-hosted").classList.toggle("on", hostedMode);
+      byId("agents-hosted").hidden = !hostedMode;
+      // The move-file export is for memories the assistants still use. In hosted mode they
+      // use the account and /api/export refuses, so the panel is not offered.
+      byId("hosted-panel").hidden = hostedMode;
       list.replaceChildren();
       const present = agents.filter((agent) => agent.present);
       // Asked once. Installing into another app unasked crosses a line; asking on every
-      // visit is how a question gets dismissed unread. null means never answered.
+      // visit is how a question gets dismissed unread. null means never answered. In
+      // hosted mode never: the question installs the local plugin, which the person has
+      // decided against.
       const connectable = present.filter((agent) => agent.can_connect && !agent.connected);
       const ask = byId("agents-ask");
-      ask.hidden = !(autoConnect === null && connectable.length > 0);
+      ask.hidden = hostedMode || !(autoConnect === null && connectable.length > 0);
       if (!ask.hidden) {
         const names = connectable.map((agent) => agent.label);
         const listed = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0];
@@ -961,9 +1054,9 @@ def dashboard_html(
         setText("agents-ask-text", `MemorySafe found ${listed} on this computer. Connect ${pronoun} to the same memory?`);
         setText("agents-yes", `Yes, connect ${pronoun}`);
       }
-      byId("agents-auto").hidden = autoConnect !== true;
+      byId("agents-auto").hidden = hostedMode || autoConnect !== true;
       const connected = present.filter((agent) => agent.connected || agent.covered).length;
-      setText("agents-note", `${present.length} FOUND · ${connected} CONNECTED`);
+      setText("agents-note", hostedMode ? "IN YOUR MEMORYSAFE ACCOUNT" : `${present.length} FOUND · ${connected} CONNECTED`);
       if (!present.length) {
         list.append(agentNode("div", "empty", "No assistants found on this computer yet."));
       }
@@ -971,6 +1064,19 @@ def dashboard_html(
         const row = agentNode("div", "agent");
         const copy = agentNode("div", "agent-copy");
         copy.append(agentNode("span", "agent-name", agent.label));
+        if (hostedMode) {
+          // The account's own connections live on the hosted side and cannot be checked
+          // locally, so no row claims one. What is known here is the plugin: in this mode
+          // its tools are answered by the account, through the sign-in above.
+          const viaPlugin = agent.connected || agent.covered;
+          copy.append(agentNode("span", "agent-note", viaPlugin
+            ? "Connected through the plugin on this computer, which reads and saves in your account once you have signed in above."
+            : "Connect it to your account from the hosted Connect page. Its account connection cannot be checked from here."));
+          row.append(copy);
+          if (viaPlugin) row.append(agentNode("span", "agent-state", "THROUGH THE PLUGIN"));
+          list.append(row);
+          continue;
+        }
         const note = agent.covered
           ? String(agent.note ?? "")
           : agent.connected
@@ -1003,11 +1109,163 @@ def dashboard_html(
       try {
         const response = await fetch("/api/agents", { cache: "no-store" });
         const payload = await response.json();
-        if (response.ok) renderAgents(payload.agents, payload.auto_connect ?? null);
+        if (response.ok) { renderAgents(payload.agents, payload.auto_connect ?? null, payload.storage_mode); renderLink(payload); }
       } catch (_) {
         // Nothing else on the dashboard depends on this panel, so it simply stays hidden.
       }
     }
+
+    async function setStorageMode(mode) {
+      // The person's one choice of where memories live. Saving it moves no memories and
+      // connects nothing; it changes what this panel offers.
+      if (mode === storageMode) return;
+      const message = byId("agents-message");
+      const buttons = [byId("mode-local"), byId("mode-hosted")];
+      buttons.forEach((button) => { button.disabled = true; });
+      try {
+        const response = await fetch("/api/storage-mode", {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "Content-Type": "application/json",
+            "X-MemorySafe-Setup-Token": localApiToken,
+          },
+          body: JSON.stringify({ mode }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error ?? "Your choice could not be saved.");
+        message.hidden = true;
+        message.textContent = "";
+        renderAgents(payload.agents, payload.auto_connect ?? null, payload.storage_mode);
+        renderLink(payload);
+        if (mode === "local" && payload.signed_out && payload.signed_out.revoked !== undefined) {
+          // Coming home signs the device link out; say so, since nothing else does.
+          message.hidden = false;
+          message.className = "agents-message";
+          message.textContent = payload.signed_out.revoked
+            ? "Memories live on this computer again. The plugin's sign-in to your hosted account was ended, on this and any other computer using it; your memories there were not changed."
+            : payload.signed_out.reached
+              ? "Memories live on this computer again. The sign-in was removed here, but your hosted account did not confirm ending it elsewhere; end it from your account page if you want that."
+              : "Memories live on this computer again. Your hosted account could not be reached, so the sign-in was removed here only.";
+        }
+      } catch (error) {
+        message.hidden = false;
+        message.className = "agents-message bad";
+        message.textContent = error.message;
+      } finally {
+        buttons.forEach((button) => { button.disabled = false; });
+      }
+    }
+
+    byId("mode-local").addEventListener("click", () => setStorageMode("local"));
+    byId("mode-hosted").addEventListener("click", () => setStorageMode("hosted"));
+
+    // The device link: the one sign-in to the hosted account, shared by every
+    // assistant through the plugin. Offered the moment hosted is chosen; the browser goes to
+    // the hosted sign-in and comes back to this dashboard's /callback.
+    let linkWatch = null;
+    function renderLink(payload) {
+      const hostedMode = (payload.storage_mode ?? storageMode) === "hosted";
+      const link = payload.device_link ?? {};
+      const count = Number(payload.local_memories ?? 0);
+      const countNode = byId("agents-local-count");
+      countNode.hidden = !(hostedMode && count > 0);
+      if (!countNode.hidden) {
+        countNode.textContent = `${count} ${count === 1 ? "memory stays" : "memories stay"} on this computer, untouched, until you come back or delete ${count === 1 ? "it" : "them"}.`;
+      }
+      byId("agents-link").hidden = !hostedMode;
+      if (!hostedMode) { if (linkWatch) { clearInterval(linkWatch); linkWatch = null; } return; }
+      const since = link.linked_at ? new Date(link.linked_at) : null;
+      setText("agents-link-text", link.linked
+        ? `This computer is signed in to your hosted account${since && !Number.isNaN(since.valueOf()) ? ` since ${since.toLocaleDateString()}` : ""}.`
+        : "This computer is not signed in to your hosted account yet. Sign in once here; every assistant connected through the plugin shares it.");
+      byId("link-signin").hidden = !!link.linked;
+      byId("link-signout").hidden = !link.linked;
+      setText("agents-link-note", link.linked
+        ? "Signing out ends the plugin's sign-in on every computer where you use it, not only this one. Your memories in the account are not changed."
+        : "The sign-in opens in your browser. Nothing is sent until you approve it there.");
+      if (link.linked && linkWatch) { clearInterval(linkWatch); linkWatch = null; }
+    }
+
+    byId("link-signin").addEventListener("click", async () => {
+      const button = byId("link-signin");
+      const message = byId("agents-message");
+      button.disabled = true;
+      // Opened now, inside the click: a browser blocks a tab opened after an await, and the
+      // start call below can take seconds. The address is filled in when it is known.
+      const tab = window.open("", "_blank");
+      try {
+        const response = await fetch("/api/link/start", {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json", "X-MemorySafe-Setup-Token": localApiToken },
+          body: "{}",
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error ?? "The sign-in could not be started.");
+        if (tab) {
+          tab.opener = null;
+          tab.location.href = String(payload.url);
+          setText("agents-link-note", "Finish signing in in the tab that opened; this page updates by itself.");
+        } else {
+          // The browser blocked the tab. The address is this account's sign-in page; a link
+          // the person clicks is always allowed.
+          const note = byId("agents-link-note");
+          note.textContent = "Your browser blocked the sign-in tab. ";
+          const open = document.createElement("a");
+          open.href = String(payload.url);
+          open.target = "_blank";
+          open.rel = "noopener";
+          open.textContent = "Open the sign-in page";
+          note.append(open, "; this page updates by itself.");
+        }
+        // The browser comes back to /callback, not to this page: look for the link until it is there.
+        if (linkWatch) clearInterval(linkWatch);
+        const started = Date.now();
+        linkWatch = setInterval(async () => {
+          if (Date.now() - started > 10 * 60 * 1000) { clearInterval(linkWatch); linkWatch = null; return; }
+          await loadAgents();
+        }, 2000);
+      } catch (error) {
+        if (tab) tab.close();
+        message.hidden = false;
+        message.className = "agents-message bad";
+        message.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    byId("link-signout").addEventListener("click", async () => {
+      const button = byId("link-signout");
+      const message = byId("agents-message");
+      button.disabled = true;
+      try {
+        const response = await fetch("/api/link/signout", {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json", "X-MemorySafe-Setup-Token": localApiToken },
+          body: "{}",
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error ?? "The sign-out did not go through.");
+        renderAgents(payload.agents, payload.auto_connect ?? null, payload.storage_mode);
+        renderLink(payload);
+        message.hidden = false;
+        message.className = "agents-message";
+        message.textContent = payload.signed_out?.revoked
+          ? "Signed out. The plugin's sign-in to your hosted account was ended on every computer using it; your memories there were not changed."
+          : payload.signed_out?.reached
+            ? "Signed out here. Your hosted account did not confirm ending the sign-in, so it may still count there until it expires or you end it from your account page."
+            : "Signed out here. Your hosted account could not be reached, so the sign-in still counts there until it expires or you end it from your account page.";
+      } catch (error) {
+        message.hidden = false;
+        message.className = "agents-message bad";
+        message.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
 
     async function decide(enabled) {
       const message = byId("agents-message");
@@ -1183,6 +1441,73 @@ def dashboard_html(
         button.disabled = false;
       }
     });
+
+    // The way back from Hosted: the account page's move file, read here in the browser and
+    // handed to /api/import as its body. No path reaches the server; the import runs every
+    // memory through remember(), so the result says what merged or needs a decision.
+    async function sendPlan(body) {
+      const result = byId("plan-result");
+      result.className = "support-result";
+      result.textContent = "";
+      try {
+        const response = await fetch("/api/plan", {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json", "X-MemorySafe-Setup-Token": localApiToken },
+          body: JSON.stringify(body),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error ?? "The plan key could not be saved");
+        byId("plan-key").value = "";
+        renderPlan(payload.local_plan ?? null);
+        result.textContent = body.remove ? "The key was removed." : "The key was accepted.";
+      } catch (error) {
+        result.className = "support-result bad";
+        result.textContent = error instanceof Error ? error.message : String(error);
+      }
+    }
+    byId("plan-save").addEventListener("click", () => {
+      const key = byId("plan-key").value.trim();
+      if (key) sendPlan({ key });
+    });
+    byId("plan-remove").addEventListener("click", () => sendPlan({ remove: true }));
+
+    const importInput = byId("hosted-import-file");
+    byId("hosted-import").addEventListener("click", () => { importInput.value = ""; importInput.click(); });
+    importInput.addEventListener("change", async () => {
+      const file = importInput.files && importInput.files[0];
+      if (!file) return;
+      const result = byId("hosted-import-result");
+      const button = byId("hosted-import");
+      result.className = "support-result";
+      result.textContent = `Importing ${file.name}…`;
+      button.disabled = true;
+      try {
+        const text = await file.text();
+        try { JSON.parse(text); } catch (_error) { throw new Error("This is not a MemorySafe export file."); }
+        const response = await fetch("/api/import", {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json", "X-MemorySafe-Setup-Token": localApiToken },
+          body: text,
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error ?? "The file could not be imported");
+        const parts = [`Imported ${payload.total} memories: ${payload.stored} new, ${payload.merged} merged with ones already here.`];
+        if (payload.replaced_older) parts.push(`${payload.replaced_older} replaced an older memory (still restorable).`);
+        if (payload.needs_review) parts.push(`${payload.needs_review} may conflict with another memory; see the conflicts above.`);
+        if (payload.protected) parts.push(`${payload.protected} kept the protection they had.`);
+        if (payload.failed) parts.push(`${payload.failed} could not be imported.`);
+        parts.push("Delete the file when you are done.");
+        result.textContent = parts.join(" ");
+        refresh();
+      } catch (error) {
+        result.className = "support-result bad";
+        result.textContent = error instanceof Error ? error.message : String(error);
+      } finally {
+        button.disabled = false;
+      }
+    });
     byId("report-send").addEventListener("click", async () => {
       const button = byId("report-send");
       const result = byId("support-result");
@@ -1331,6 +1656,9 @@ _HOSTED_WORDING = (
         "until you upload the file yourself.</p>",
         '<p class="hosted-text"></p>',
     ),
+    # The storage-mode chooser stays hidden on the hosted page (renderAgents never runs
+    # there), but its static label must not call the device a computer the page is not on.
+    (">On this computer</button>", ">On this device</button>"),
     ("on this computer", "on this device"),
 )
 

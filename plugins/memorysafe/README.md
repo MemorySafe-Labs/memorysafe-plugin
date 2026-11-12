@@ -1,4 +1,4 @@
-# MemorySafe 0.4.32
+# MemorySafe 0.5.0
 
 Private, governed memory for Claude Code, Claude Desktop and Codex, kept in one SQLite
 file on your own computer. macOS, Linux and Windows. Free, and open source under the
@@ -52,10 +52,14 @@ last lines say how to add it to your PATH. Then:
 
 Restart Claude Code, run `/mcp`, and confirm `memorysafe` is connected with twelve tools.
 
-The plugin adds a hook that Claude Code runs on this computer each time you send a message.
-It reads the message there, sends nothing anywhere and saves nothing. While automatic
-capture is off it stays silent; once you turn it on, it reminds Claude to offer the facts
-you just stated. It does not run on Windows.
+The plugin adds two hooks that Claude Code runs on this computer, and neither sends anything
+anywhere. One runs when a session starts and hands Claude about a dozen short lines from your
+memory: safety notes and your preferences first. The other runs each time you send a message
+and reads it there. While automatic capture is off it saves nothing and stays silent; once you
+turn it on, it saves a preference you state plainly ("always use Black") itself and reminds
+Claude to offer the other lasting facts you stated. A one-off instruction ("don't add tests
+yet") is not a preference and is not saved. If you chose "In my hosted account", neither hook
+reads or writes the file on this computer. The hooks do not run on Windows.
 
 ## Claude Desktop
 
@@ -105,8 +109,15 @@ yet, write to contact@memorysafe.ca for early access.
 The first time an assistant starts MemorySafe, it downloads uv from GitHub, a Python
 build through uv, hash-pinned packages from PyPI, and the tokenizer data it counts tokens
 with, all into the MemorySafe folder. That takes a minute or two, once. After that,
-nothing leaves this computer, unless you connect another assistant to MemorySafe: that
-assistant's own installer then downloads the plugin from GitHub. On a network that blocks GitHub, set MEMORYSAFE_UV to a uv
+nothing leaves this computer, with two exceptions you choose yourself. Connecting another
+assistant to MemorySafe: that assistant's own installer then downloads the plugin from GitHub.
+Choosing "In my hosted account" on the dashboard and signing in: from then on every memory
+your assistants save or search goes to memory.memorysafe.ca, your own account and nothing
+else, and the dashboard shows it. The memories already on this computer stay here, and the
+assistants no longer read or change them; `memorysafe erase --everything "erase everything"`
+removes them for good if you want no copy left.
+If the account cannot be reached, the assistant is told so in one sentence and nothing is
+changed. Signing out, or choosing "On this computer" again, ends that. On a network that blocks GitHub, set MEMORYSAFE_UV to a uv
 you already have, or HTTPS_PROXY to your proxy.
 
 ## What MemorySafe decides
@@ -164,16 +175,34 @@ Automatic capture is **disabled** until you explicitly enable it:
 
 > Turn on MemorySafe automatic mode.
 
-Even then, the assistant recognises and submits each candidate itself — MemorySafe never
-watches a conversation on its own. Manual saves always require you to ask.
+Even then, MemorySafe sees only what reaches it: the facts the assistant submits and, in
+Claude Code and Codex, the message you just sent, which a hook reads on this computer to save a
+plainly stated preference. It keeps no copy of your conversations. Manual saves always require
+you to ask.
 
 ## What it refuses to store
 
-Automatic capture will not save assistant-generated text, inferences, passing remarks,
-passwords, API keys, payment or government identifiers, contact details, precise
-addresses, or medical information. These are refusals, not settings. Keeping other
+Automatic capture refuses passwords, API keys, payment or government identifiers, contact
+details, precise addresses and medical information. These are refusals, not settings. The
+assistant is told to save only lasting facts — not questions, passing remarks, one-off
+instructions or guesses about you. These checks recognise shapes, so they are not perfect:
+tell the assistant to forget anything that should not have been kept. Keeping other
 people's personal details out is a rule the assistant is told to follow; the server does
 not yet enforce it.
+
+## Forget, and erase
+
+Forgetting takes a memory out of recall and keeps it, with its history, so it can be
+restored. Erasing deletes it for good:
+
+    memorysafe erase <memory id>            # says what would be deleted
+    memorysafe erase <memory id> --confirm  # deletes it
+
+An erase removes the memory, the older versions it replaced, their history and the words of
+past searches, rewrites the store's file so the text is no longer in it, and deletes the
+snapshots and exports that held it. You get a receipt with counts and no text. It cannot reach
+what an assistant already received in a conversation, session transcripts, files you saved
+elsewhere, or backups of this computer. Assistants cannot erase: it is a command, on purpose.
 
 ## Installed MemorySafe by hand before?
 

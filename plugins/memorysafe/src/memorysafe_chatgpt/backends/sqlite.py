@@ -13,6 +13,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# settings key present while a permanent erase has deleted rows from a file that could not
+# yet be rewritten. See erase.py.
+ERASE_UNFINISHED = "erase_unfinished"
+# What health says while that mark is set.
+ERASE_UNFINISHED_STATUS = (
+    "A permanent erase is waiting for this store's file to be rewritten. The memory's rows are "
+    "deleted, but traces of its text may remain in the file until `memorysafe erase --finish` "
+    "succeeds; the dashboard also tries it each time it starts. No snapshot is taken until then."
+)
+
 
 def _display_path(path: Path) -> str:
     """Home-relative rendering of a database path, for display only."""
@@ -20,6 +30,29 @@ def _display_path(path: Path) -> str:
         return "~/" + str(path.resolve().relative_to(Path.home()))
     except ValueError:
         return str(path)
+
+
+def _forget_search_words(connection: sqlite3.Connection) -> None:
+    """Take the words out of searches logged by a release before a search stopped recording them.
+
+    Until 10 Nov 2026 a search was logged as "Recalled N memories for: <query>". New searches
+    hold no words, but up to 2,000 old ones stayed until they were pruned, which for a store
+    searched now and then is years. The count at the front of the sentence is what every
+    reader of the log uses; the words after it go.
+
+    Each time the store is opened, not once for good and not on every search. On every
+    search it scanned the whole log inside the write for nothing. Once for good missed what
+    an older host still writes: one file is shared by Claude Code, Codex and the Claude
+    Desktop extension, which updates only when it is reinstalled, so an older one can keep
+    logging words after the first new one has cleaned. The hosted edition cleans in its
+    migrations (0025, and again a release later).
+    """
+
+    connection.execute(
+        "UPDATE decision_events SET reason = substr(reason, 1, instr(reason, ' for: ') - 1) || '.' "
+        "WHERE decision = 'RECALL' AND reason LIKE ?",
+        ("Recalled % memories for: %",),
+    )
 
 
 class SqliteBackend:
@@ -31,6 +64,26 @@ class SqliteBackend:
         self.database_path = database_path
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
 
+    def _owner_only(self) -> None:
+        """The data folder, the store, its sidecars and its snapshots readable by their owner
+        alone. They took the process's default (0644 in a 0755 folder), so on a computer with
+        several accounts anyone could read every memory. Windows keeps its own ACLs."""
+        import os
+        import sys
+
+        if sys.platform == "win32":
+            return
+        folder = self.database_path.parent
+        targets = [(folder, 0o700), (folder / "snapshots", 0o700)]
+        targets += [(self.database_path.with_name(self.database_path.name + suffix), 0o600) for suffix in ("", "-wal", "-shm")]
+        targets += [(path, 0o600) for path in (folder / "snapshots").glob("memorysafe-*.sqlite3")]
+        for path, mode in targets:
+            try:
+                if path.exists() and (path.stat().st_mode & 0o777) != mode:
+                    os.chmod(path, mode)
+            except OSError:
+                pass
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=30)
         connection.row_factory = sqlite3.Row
@@ -38,6 +91,10 @@ class SqliteBackend:
         # Wait rather than fail when another client holds the database. One store can be
         # shared by Claude, ChatGPT and Codex at once, so contention is normal.
         connection.execute("PRAGMA busy_timeout = 30000")
+        # Overwrite what is deleted with zeros. Many SQLite builds leave deleted text in the
+        # file's free pages until the file is rewritten, and a backup copies those pages; a
+        # permanent erase must not depend on which build the computer's Python carries.
+        connection.execute("PRAGMA secure_delete = ON")
         # Switching to WAL needs a brief exclusive lock, so it raises "database is locked"
         # if another client is mid-write. The mode is persisted in the file, so once any
         # connection has set it the rest inherit it — failing here would abort startup for
@@ -85,6 +142,17 @@ class SqliteBackend:
     def may_replace(self, old: Any, new: Any) -> bool:
         # One person's file: every memory in it is seen by the same one person.
         return True
+
+    def room(self, connection: Any, memory_id: str | None = None) -> tuple[int, int, str] | None:
+        # This computer's plan: a signed key in the state folder, or free. No limit at all
+        # until a build can check a key (plans.enforced), which is how it has always been.
+        from .. import plans
+
+        plan = plans.local_plan(self.database_path)
+        if not plan["enforced"]:
+            return None
+        used = int(connection.execute("SELECT COUNT(*) FROM memories WHERE state = 'active'").fetchone()[0])
+        return used, int(plan["limit"]), str(plan["plan"])
 
     def initialize(self) -> None:
         with self.session() as connection:
@@ -180,6 +248,22 @@ class SqliteBackend:
                 connection.execute(
                     "ALTER TABLE memories ADD COLUMN recall_count INTEGER NOT NULL DEFAULT 0"
                 )
+            if "last_used_at" not in memory_columns:
+                # When the memory last came up (a recall or a restatement). NULL means
+                # never since it was saved, which is what every existing memory can
+                # honestly claim: recall_count says how often, nothing recorded when.
+                connection.execute("ALTER TABLE memories ADD COLUMN last_used_at TEXT")
+            if "search_terms" not in memory_columns:
+                # Other words an assistant said this memory might be searched by, folded
+                # like normalized_content. Empty for every memory saved without any.
+                connection.execute("ALTER TABLE memories ADD COLUMN search_terms TEXT NOT NULL DEFAULT ''")
+            if "restated_count" not in memory_columns:
+                # How many times the same fact was saved again and merged into this one.
+                connection.execute(
+                    "ALTER TABLE memories ADD COLUMN restated_count INTEGER NOT NULL DEFAULT 0"
+                )
+            _forget_search_words(connection)
+        self._owner_only()
 
     def storage_bytes(self) -> int:
         try:
@@ -203,6 +287,14 @@ class SqliteBackend:
         # Shown home-relative so the path is legible without exposing the account name.
         return _display_path(self.database_path)
 
+    def erase_unfinished(self, connection: sqlite3.Connection) -> bool:
+        """Whether a permanent erase has deleted rows from a file it could not yet rewrite."""
+
+        row = connection.execute(
+            "SELECT value FROM settings WHERE key = ?", (ERASE_UNFINISHED,)
+        ).fetchone()
+        return row is not None
+
     def snapshot(self, keep: int = 5) -> Path | None:
         """Take a consistent copy of the store, keeping the last few.
 
@@ -214,6 +306,15 @@ class SqliteBackend:
         while the assistants are writing is still consistent.
         """
 
+        # An erase whose file rewrite was refused leaves free pages that may still hold the
+        # erased text, and a backup copies free pages. No snapshot until `erase --finish`
+        # has rewritten the file: the folder that erase emptied stays empty.
+        try:
+            with self.session() as connection:
+                if self.erase_unfinished(connection):
+                    return None
+        except sqlite3.Error:
+            return None
         directory = self.database_path.parent / "snapshots"
         directory.mkdir(parents=True, exist_ok=True)
         # Second precision let two snapshots in the same second collide and overwrite,
@@ -234,6 +335,7 @@ class SqliteBackend:
         except sqlite3.Error:
             return None
 
+        self._owner_only()
         # Keep the newest few. Snapshots that accumulate for ever are their own problem.
         existing = sorted(directory.glob("memorysafe-*.sqlite3"))
         for stale in existing[:-keep]:

@@ -44,6 +44,7 @@ import json
 import os
 import re
 import sqlite3
+import struct
 import sys
 from pathlib import Path
 
@@ -74,7 +75,7 @@ _CLEAR_PREFERENCE_RE = re.compile(
     r"(?:always|never)\s+\w+"
     r"|i\s+(?:always|never)\s+(?:use|want|prefer|write|run)\b"
     r"|i\s+prefer\b"
-    r"|(?:from now on|going forward)\b"
+    r"|(?:from now on|going forward(?!\s+with))\b"
     r"|(?:do not|don't|never)\s+(?:add|use|install|write|create)\b"
     r"|(?:use|stick to|stick with)\s+\S+.*\b(?:for|when|instead of|not)\b"
     r")",
@@ -120,7 +121,41 @@ def connect_read_only(database: Path) -> sqlite3.Connection:
     try:
         return sqlite3.connect(f"{uri}?mode=ro", uri=True, timeout=1)
     except sqlite3.OperationalError:
+        # immutable=1 reads the main file and ignores the write-ahead log, so while another
+        # program is mid-write it shows the store as it was: a memory forgotten a moment ago
+        # still active, automatic mode still on after it was switched off. Acting on that
+        # would carry or save what the person just said not to. When the log holds anything,
+        # this reader says it cannot read, and the hook stays silent for this one turn.
+        if unseen_changes(database):
+            raise sqlite3.OperationalError("the store has changes this reader cannot see")
         return sqlite3.connect(f"{uri}?mode=ro&immutable=1", uri=True, timeout=1)
+
+
+def unseen_changes(database: Path) -> bool:
+    """Whether the write-ahead log holds changes not yet in the main file.
+
+    A checkpoint copies the log into the main file but does not shrink the log, so the log
+    is almost never empty while an assistant has the store open, and "not empty" kept the
+    immutable reader from ever running (found 11 Nov 2026). SQLite's index beside the log
+    (-shm) says how far the log goes (mxFrame, byte 16 of its header) and how much of it is
+    already in the main file (nBackfill, byte 96), in this machine's byte order. When the two
+    match, the main file is current. When the index is missing, torn or unreadable, the log
+    is taken to hold changes, as before."""
+    wal = database.with_name(database.name + "-wal")
+    try:
+        if wal.stat().st_size == 0:
+            return False
+    except OSError:
+        return False
+    try:
+        header = database.with_name(database.name + "-shm").read_bytes()[:136]
+    except OSError:
+        return True
+    # Two copies of the header, written one after the other: equal means not mid-update.
+    if len(header) < 136 or header[:48] != header[48:96] or header[12] != 1:
+        return True
+    written, copied = struct.unpack_from("=I", header, 16)[0], struct.unpack_from("=I", header, 96)[0]
+    return written != copied
 
 
 def automatic_mode_enabled(database: Path) -> bool:
@@ -139,18 +174,57 @@ def automatic_mode_enabled(database: Path) -> bool:
     return bool(row and row[0] == "enabled")
 
 
+# What makes a matching sentence an instruction for this one piece of work and not a
+# standing preference. This hook saves without the model, so it must not guess: "Never
+# mind, I fixed it.", "Don't add tests yet.", "Do not create a PR until I say so." and "Use
+# the staging database for this run, not prod." all matched the pattern above, were saved
+# as protected preferences, and were then carried into every later session, in every
+# project, as rules to apply without being asked (found 10 Nov 2026). capture_policy.remark
+# knows more shapes and is asked too when the store code is available; this short list is
+# what holds when it is not.
+_ONE_OFF_RE = re.compile(
+    r"\bnever ?mind\b|\bfor now\b|\bthis time\b|\bjust this once\b|\buntil i (?:say|tell)\b|\bnot yet\b"
+    r"|\bfor this (?:run|task|session|pr|commit|branch|file|one|call|draft|version|test|step)\b"
+    r"|\byet\s*[.!]?\s*$|\b(?:today|tonight|tomorrow|right now|at the moment)\b",
+    re.IGNORECASE,
+)
+_STANDING_RE = re.compile(
+    r"\b(?:always|never(?!\s?mind)|from now on|going forward(?!\s+with)|by default|every time|whenever)\b",
+    re.IGNORECASE,
+)
+
+
 def clear_preferences(prompt: str) -> list[str]:
-    """The sentences of `prompt` that state a preference plainly, at most three."""
+    """The sentences of `prompt` that state a standing preference plainly, at most three."""
     found = []
     for sentence in _SENTENCE_SPLIT.split(prompt):
         sentence = " ".join(sentence.split())
         if not sentence or "?" in sentence or len(sentence) > PREFERENCE_MAX_CHARS:
             continue
-        if _CLEAR_PREFERENCE_RE.match(sentence):
-            found.append(sentence)
+        if not _CLEAR_PREFERENCE_RE.match(sentence):
+            continue
+        if _ONE_OFF_RE.search(sentence) and not _STANDING_RE.search(sentence.replace("never mind", "")):
+            continue
+        if re.match(r"\s*never ?mind\b", sentence, re.IGNORECASE):
+            continue
+        found.append(sentence)
         if len(found) == 3:
             break
     return found
+
+
+def hosted_mode(database: Path) -> bool:
+    """Whether the person chose to keep their memories in their hosted account (the record
+    storage_mode writes beside the data folder). There this hook does nothing: saving to the
+    file on this computer would put a preference where no assistant reads it any more, and
+    telling the model it was saved would stop it reaching the account."""
+    configured = os.environ.get("MEMORYSAFE_STATE_DIR")
+    folder = Path(configured).expanduser() if configured else database.parent.parent / "runtime-state"
+    try:
+        record = json.loads((folder / "storage-mode.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(record, dict) and record.get("mode") == "hosted"
 
 
 def _import_store():
@@ -185,7 +259,7 @@ def save_preferences(database: Path, sentences: list[str]) -> list[str]:
             if capture_policy.skip_reason(sentence, "preference", True) is not None:
                 continue
             result = store.remember(sentence, "preference", source="automatic")
-            if result.get("decision") != "SKIP":
+            if result.get("decision") not in ("SKIP", "FULL"):
                 saved.append(str(result.get("content") or sentence))
     except Exception:  # noqa: BLE001 - a hook never fails a prompt; the model still gets the hint
         return saved
@@ -214,7 +288,7 @@ def main() -> int:
         return 0
 
     database = database_path()
-    if not automatic_mode_enabled(database):
+    if hosted_mode(database) or not automatic_mode_enabled(database):
         return 0
 
     context = _HINT

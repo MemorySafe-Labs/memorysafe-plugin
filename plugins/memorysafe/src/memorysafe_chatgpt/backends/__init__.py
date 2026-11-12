@@ -47,6 +47,15 @@ class Backend(Protocol):
         """
         ...
 
+    def room(self, connection: Any, memory_id: str | None = None) -> tuple[int, int, str] | None:
+        """(active memories counted against the plan, the plan's limit, the plan's name),
+        or None when this store has no limit. Asked inside the write's own transaction,
+        after a new memory is inserted, so the count includes it. A full store refuses the
+        new memory; nothing is ever removed to make room (memorysafe_chatgpt.plans).
+        `memory_id` is the memory just written, for a backend that decides by where it
+        landed."""
+        ...
+
     def may_replace(self, old: Any, new: Any) -> bool:
         """May `new` supersede `old` without a person deciding? Both are full memories rows.
 

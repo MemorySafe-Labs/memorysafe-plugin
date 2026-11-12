@@ -6,30 +6,62 @@ import subprocess
 import sys
 from pathlib import Path
 from collections.abc import Callable
-from typing import Any, Annotated, Literal
+from typing import Any, Annotated, ClassVar, Literal
 
 from mcp.server.mcpserver import MCPServer
 from mcp_types import ToolAnnotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from .bootstrap_catalog import SERVER_INSTRUCTIONS, VERSION
+from .tool_errors import spoken
 from .dashboard import DASHBOARD_MIME_TYPE, DASHBOARD_URI, dashboard_html
 from .doctor import run_doctor
-from . import capture_policy
+from . import capture_policy, hosted_proxy
 from .storage import MemoryStore
 
 
 Category = Literal["preference", "personal", "project", "decision", "task", "safety", "other"]
 
 
-class RememberResult(BaseModel):
-    decision: Literal["PROTECT", "STORE", "MERGE", "SKIP"]
-    memory_id: str
+class LeanResult(BaseModel):
+    """A result that says only what is so: optional fields at their empty value are left out.
+
+    Every key of every result is paid for in the assistant's context, on every call. One
+    found memory of thirteen tokens used to arrive as a hundred and fifty: its text, plus
+    importance, confidence, a match score, a full timestamp, `needs_review: false`,
+    `open_conflict_ids: []` and `review_note: null`. None of those change what the assistant
+    should do, and the three scores are the server's own bookkeeping.
+
+    Only fields that have a default are ever left out, so what is sent still satisfies the
+    declared output schema, and a reader that validates into the same model gets the
+    defaults back. `_never_sent` names bookkeeping fields that are not sent at all.
+    """
+
+    _never_sent: ClassVar[frozenset[str]] = frozenset()
+
+    @model_serializer(mode="wrap")
+    def _lean(self, handler: Any) -> dict[str, Any]:
+        data = handler(self)
+        for name, field in type(self).model_fields.items():
+            if field.is_required():
+                continue
+            value = data.get(name)
+            if name in self._never_sent or value is None or value is False or value == [] or value in ("", "none"):
+                data.pop(name, None)
+        return data
+
+
+class RememberResult(LeanResult):
+    _never_sent: ClassVar[frozenset[str]] = frozenset({"importance", "confidence"})
+
+    # FULL: the store is at its plan's limit; nothing was saved and nothing was removed.
+    decision: Literal["PROTECT", "STORE", "MERGE", "SKIP", "FULL"]
+    memory_id: str | None = None
     content: str
     category: str
-    importance: float
-    confidence: float
-    protected: bool
+    importance: float | None = None
+    confidence: float | None = None
+    protected: bool = False
     reason: str
     lifecycle: Literal["none", "superseded_previous", "needs_review"] | None = None
     replaced_memory_id: str | None = None
@@ -54,10 +86,39 @@ class MemoryMatch(BaseModel):
     review_note: str | None = None
 
 
+# A memory as a search returns it to an assistant: the text, what kind it is, when it last
+# changed and its id; `protected` and the conflict fields only when they are set. (A comment,
+# not a docstring: a docstring becomes the schema's description, and the hosted edition's
+# subclass must publish the same schema.)
+class FoundMemory(LeanResult, MemoryMatch):
+    _never_sent: ClassVar[frozenset[str]] = frozenset({"importance", "confidence", "match_score"})
+
+    importance: float | None = None
+    confidence: float | None = None
+    match_score: float | None = None
+    protected: bool = False
+
+
 class FindResult(BaseModel):
     query: str
     count: int
-    memories: list[MemoryMatch]
+    memories: list[FoundMemory]
+
+
+# What a hosted account adds to a result, kept when this plugin forwards to one. A model
+# drops the keys it does not declare, so the account's "this may be out of date" never
+# reached the assistant, which then stated an old status as current. These are returned
+# only in hosted mode; the tools' published schemas stay the local ones (the MCP library
+# dumps a returned subclass with its own fields). Empty, they are left out (LeanResult).
+class _ForwardedFoundMemory(FoundMemory):
+    layer: str | None = None
+    possibly_stale: bool = False
+    stale_reason: str | None = None
+    status_review: str | None = None
+
+
+class _ForwardedFindResult(FindResult):
+    memories: list[_ForwardedFoundMemory]
 
 
 class DoctorCheck(BaseModel):
@@ -148,6 +209,9 @@ class ExplainResult(BaseModel):
     protected_since: str | None = None
     confidence: float | None = None
     recall_count: int | None = None
+    restated_count: int | None = None
+    last_used_at: str | None = None
+    keywords: list[str] = []
     state: str | None = None
     history: list[dict[str, Any]] = []
     relations: list[dict[str, Any]] = []
@@ -193,7 +257,9 @@ class TokenBenchmarkResult(BaseModel):
 
 
 class LiveTokenMetricsResult(BaseModel):
-    kind: Literal["live_local"]
+    # "hosted_estimate" is the hosted edition's token_estimate, shown here when this
+    # computer is in hosted mode: the same fields, counted on the account's memories.
+    kind: Literal["live_local", "hosted_estimate"]
     tokenizer: str
     exact: bool
     active_memory_tokens: int
@@ -221,7 +287,8 @@ class HealthResult(BaseModel):
     automatic_last_decision: str | None
     automatic_last_reason: str | None
     comparison: ComparisonResult
-    live_token_metrics: LiveTokenMetricsResult
+    # None only in hosted mode when the account sent no estimate; local health always has it.
+    live_token_metrics: LiveTokenMetricsResult | None
     token_benchmark: TokenBenchmarkResult
     formula: str
     # Liveness, deliberately kept out of memory_health. Every term of the score rates what
@@ -245,12 +312,18 @@ class HealthResult(BaseModel):
     superseded_memories: int = 0
     open_reviews: int = 0
     governance_status: str = ""
+    # True while a permanent erase waits for the store's file to be rewritten; erase_status
+    # says what to do. An erase that silently never finished would be the worst kind.
+    erase_unfinished: bool = False
+    erase_status: str = ""
     # Declared, or Pydantic drops it before it reaches the dashboard -- the same
     # leak that already cost the recall telemetry and the conflict counters.
     governance_events: list[dict[str, Any]] = []
     conflict_penalty: int = 0
     evicted_memories: int = 0
     max_active: int | None = None
+    # {"plan", "used", "limit"} when the store has a plan limit; null when it has none.
+    plan: dict[str, Any] | None = None
 
 
 class RecallSummary(BaseModel):
@@ -286,7 +359,7 @@ class AutomaticModeResult(BaseModel):
 
 class AutomaticCaptureResult(BaseModel):
     saved: bool
-    decision: Literal["PROTECT", "STORE", "MERGE", "SKIP"]
+    decision: Literal["PROTECT", "STORE", "MERGE", "SKIP", "FULL"]
     memory_id: str | None
     content: str
     category: str
@@ -374,6 +447,38 @@ def _store() -> MemoryStore:
     return _stores[path]
 
 
+def _hosted_mode() -> bool:
+    """Whether this computer's tools are served by the person's hosted account.
+
+    Only the local plugin is ever in hosted mode: a deployment with a store provider (the
+    hosted edition itself) is the account, and never forwards. Read on every call, not
+    cached: the dashboard changes the mode while the assistants are running, and the very
+    next call must follow it.
+    """
+    return _store_provider is None and hosted_proxy.active()
+
+
+
+class _ForwardedRememberResult(RememberResult):
+    # Where the account filed it: its own, a project, the organization.
+    layer: str | None = None
+
+
+# The local result model -> the one a forwarded answer is read into.
+_FORWARDED: dict[type[BaseModel], type[BaseModel]] = {
+    FindResult: _ForwardedFindResult,
+    RememberResult: _ForwardedRememberResult,
+}
+
+def _forward(name: str, model: type[BaseModel], **arguments: Any) -> Any:
+    """The same tool, answered by the hosted account (hosted_proxy says what can fail)."""
+    return _FORWARDED.get(model, model).model_validate(hosted_proxy.call(name, arguments))
+
+
+# One sentence, because it ships in every conversation. With these words a search phrased
+# differently from the memory can still find it; without them it almost never does.
+KEYWORDS_DESCRIPTION = "3-6 other words it might be searched by (synonyms, topic), not already in it."
+
 server = MCPServer(
     name="memorysafe",
     title="MemorySafe",
@@ -416,8 +521,14 @@ def remember(
         Field(min_length=1, max_length=10_000, description="The fact to remember; line breaks are kept."),
     ],
     category: Annotated[Category, Field(description="Kind of memory.")] = "other",
+    keywords: Annotated[list[str], Field(max_length=8, description=KEYWORDS_DESCRIPTION)] = [],
 ) -> RememberResult:
-    return RememberResult.model_validate(_store().remember(content, category))
+    if _hosted_mode():
+        # Sent only when given: an account on an older release ignores the argument either
+        # way, and an empty list is one less thing on the wire.
+        extra = {"keywords": list(keywords)} if keywords else {}
+        return _forward("memorysafe_remember", RememberResult, content=content, category=category, **extra)
+    return RememberResult.model_validate(_store().remember(content, category, keywords=keywords))
 
 
 @server.tool(
@@ -436,39 +547,9 @@ def remember(
 def set_automatic_mode(
     enabled: Annotated[bool, Field(description="On or off.")],
 ) -> AutomaticModeResult:
+    if _hosted_mode():
+        return _forward("memorysafe_set_auto_mode", AutomaticModeResult, enabled=enabled)
     return AutomaticModeResult.model_validate(_store().set_automatic_mode(enabled))
-
-
-_SENSITIVE_AUTOMATIC_CONTENT = re.compile(
-    r"\b(?:password|passcode|one[- ]time code|otp|api key|secret key|private key|"
-    r"access token|refresh token|credit card|debit card|card number|cvv|cvc|bank account|"
-    r"routing number|social security|social insurance|passport|driver'?s? licen[cs]e|"
-    r"date of birth|home address|street address|phone number|email address|diagnos(?:is|ed)|"
-    r"medical record|medication|allerg(?:y|ic)|therapy|therapist)\b",
-    re.IGNORECASE,
-)
-# The word list caught "social insurance number" and "phone number" but not an actual
-# SIN or phone number written on its own, which is the form they are usually stated in.
-# A privacy-first product leaking those is the worst failure available to it.
-# Credential formats are matched by their issuer prefix rather than by entropy: the
-# prefixes are distinctive enough to be near-zero false positive on ordinary prose,
-# whereas an entropy test flags every base64 blob and every long identifier.
-_SECRET_LIKE_VALUE = re.compile(
-    r"\bsk-[A-Za-z0-9_-]{10,}\b"                      # API keys
-    r"|\b\d{13,19}\b"                                  # card numbers
-    r"|\b\d{3}[-. ]\d{3}[-. ]\d{3}\b"                  # Canadian SIN
-    r"|\b\d{3}-\d{2}-\d{4}\b"                          # US SSN
-    r"|(?:\+?\d{1,2}[-. ])?\(?\d{3}\)?[-. ]\d{3}[-. ]\d{4}\b"  # phone numbers
-    r"|\bA(?:KIA|SIA|ROA|IDA|GPA|NPA|NVA|IPA)[0-9A-Z]{16}\b"        # AWS key ids
-    r"|\beyJ[A-Za-z0-9_/+=-]{15,}"                                   # JWT / bearer payloads
-    r"|\bBearer\s+[A-Za-z0-9._~+/=-]{16,}"                           # Authorization headers
-    r"|\b(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{20,}\b"                 # GitHub tokens
-    r"|\bgithub_pat_[A-Za-z0-9_]{20,}\b"                             # GitHub fine-grained PAT
-    r"|\bxox[abprs]-[A-Za-z0-9-]{10,}\b"                             # Slack tokens
-    r"|\bAIza[0-9A-Za-z_-]{30,}"                                     # Google API keys
-    r"|\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b"                 # Stripe keys
-    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"                            # PEM private keys
-)
 
 
 def _automatic_skip_reason(content: str, category: str) -> str | None:
@@ -491,10 +572,7 @@ def _automatic_skip_reason(content: str, category: str) -> str | None:
     name="memorysafe_auto_capture",
     title="Capture durable memories",
     description=(
-        "Save the durable facts the user just stated — all of them in one call, only while "
-        "automatic mode is on. Duplicates merge. Nothing is dropped for being old or low-value. "
-        "Never ask first. Never pass whole messages, inferences, secrets, IDs, contacts, "
-        "addresses or health data."
+        "Save the durable facts the user just stated — all of them in one call, only while automatic mode is on. Duplicates merge. Nothing stored is dropped for being old or low-value. Never ask first. Never pass whole messages, inferences, secrets, IDs, contacts, addresses or health data."
     ),
     annotations=ToolAnnotations(
         readOnlyHint=False,
@@ -509,15 +587,30 @@ def automatic_capture(
         Field(min_length=1, max_length=3, description="One sentence each."),
     ],
     category: Annotated[Category, Field(description="Kind of memory.")] = "other",
+    keywords: Annotated[
+        list[str],
+        Field(max_length=3, description="Per fact, in order: " + KEYWORDS_DESCRIPTION[0].lower() + KEYWORDS_DESCRIPTION[1:-1] + ", comma-separated."),
+    ] = [],
 ) -> AutomaticCaptureBatch:
     # One call for up to three facts. Three separate round trips was friction on the only
     # path that matters, and friction on a call the host model already has to choose to
     # make is how a memory product ends up with three captures a fortnight.
+    if _hosted_mode():
+        # The whole batch goes: the account applies the capture policy and its own
+        # automatic-mode switch, so the refusal log is the account's, not this computer's.
+        extra = {"keywords": list(keywords)} if keywords else {}
+        return _forward("memorysafe_auto_capture", AutomaticCaptureBatch, facts=list(facts), category=category, **extra)
     results: list[AutomaticCaptureResult] = []
-    for raw in facts[:3]:
+    for position, raw in enumerate(facts[:3]):
         clean_content = " ".join(str(raw).split())
         if not clean_content:
             continue
+        # Search words are held to the same refusals as the fact: a secret must not ride
+        # in beside a harmless sentence. Refused words are dropped; the fact is still judged
+        # on its own.
+        offered = str(keywords[position]) if position < len(keywords) else ""
+        if offered and capture_policy.classify(offered) is not None:
+            offered = ""
         reason = _automatic_skip_reason(clean_content, category)
         if reason:
             _store().record_automatic_skip(reason, clean_content)
@@ -532,10 +625,10 @@ def automatic_capture(
                 )
             )
             continue
-        stored = _store().remember(clean_content, category, source="automatic")
+        stored = _store().remember(clean_content, category, source="automatic", keywords=offered)
         # A SKIP changed nothing: the fact is already held in a memory this call may
         # not change, so it is not counted or described as saved.
-        saved = stored["decision"] != "SKIP"
+        saved = stored["decision"] not in ("SKIP", "FULL")
         results.append(
             AutomaticCaptureResult(
                 saved=saved,
@@ -570,7 +663,9 @@ def find_memories(
     query: Annotated[str, Field(max_length=500, description="What to look for.")] = "",
     limit: Annotated[int, Field(ge=1, le=20, description="Maximum results.")] = 5,
 ) -> FindResult:
-    matches = [MemoryMatch.model_validate(item) for item in _store().find(query, limit)]
+    if _hosted_mode():
+        return _forward("memorysafe_find", FindResult, query=query, limit=limit)
+    matches = [FoundMemory.model_validate(item) for item in _store().find(query, limit)]
     return FindResult(query=query, count=len(matches), memories=matches)
 
 
@@ -595,6 +690,8 @@ def forget_memory(
         bool, Field(description="Required for a protected memory, after the user agrees.")
     ] = False,
 ) -> ForgetResult:
+    if _hosted_mode():
+        return _forward("memorysafe_forget", ForgetResult, memory_id=memory_id, confirm=confirm)
     return ForgetResult.model_validate(_store().forget(memory_id, confirm=confirm))
 
 
@@ -616,6 +713,8 @@ def protect_memory(
     memory_id: Annotated[str, Field(min_length=1, max_length=80, description="Exact memory ID.")],
     protect: Annotated[bool, Field(description="true protects, false unprotects.")] = True,
 ) -> ProtectResult:
+    if _hosted_mode():
+        return _forward("memorysafe_protect", ProtectResult, memory_id=memory_id, protect=protect)
     return ProtectResult.model_validate(_store().protect(memory_id, protected=protect))
 
 
@@ -636,6 +735,8 @@ def protect_memory(
 def explain_memory(
     memory_id: Annotated[str, Field(min_length=1, max_length=80, description="Exact memory ID.")],
 ) -> ExplainResult:
+    if _hosted_mode():
+        return _forward("memorysafe_explain", ExplainResult, memory_id=memory_id)
     return ExplainResult.model_validate(_store().inspect_memory(memory_id))
 
 
@@ -658,6 +759,8 @@ def review_conflicts(
         bool, Field(description="Also list already resolved replacements.")
     ] = False,
 ) -> ReviewConflictsResult:
+    if _hosted_mode():
+        return _forward("memorysafe_review_conflicts", ReviewConflictsResult, include_resolved=include_resolved)
     return ReviewConflictsResult.model_validate(
         _store().review_conflicts(include_resolved=include_resolved)
     )
@@ -688,6 +791,10 @@ def resolve_conflict(
         bool, Field(description="Must be true; otherwise nothing is changed.")
     ] = False,
 ) -> ResolveConflictResult:
+    if _hosted_mode():
+        return _forward(
+            "memorysafe_resolve_conflict", ResolveConflictResult, conflict_id=conflict_id, action=action, confirm=confirm
+        )
     return ResolveConflictResult.model_validate(
         _store().resolve_conflict(conflict_id, action, confirm=confirm)
     )
@@ -713,6 +820,8 @@ def restore_memory(
         bool, Field(description="Must be true; otherwise nothing is changed.")
     ] = False,
 ) -> RestoreResult:
+    if _hosted_mode():
+        return _forward("memorysafe_restore", RestoreResult, memory_id=memory_id, confirm=confirm)
     return RestoreResult.model_validate(_store().restore(memory_id, confirm=confirm))
 
 
@@ -720,12 +829,7 @@ def restore_memory(
     name="memorysafe_doctor",
     title="Diagnose a MemorySafe install",
     description=(
-        "Check this MemorySafe installation and say what to do about anything wrong. "
-        "Call this whenever the user says MemorySafe is not working, memories seem "
-        "missing, or a fresh install does not respond -- and before suggesting a "
-        "reinstall. Read-only: it inspects the installation, never memory contents, "
-        "and changes nothing. Read 'next_actions' out in plain language and work "
-        "through them in order; do not read the raw checks to the user."
+        "Check this MemorySafe installation when it is not working, memories seem missing or a fresh install does not respond, before suggesting a reinstall. Read-only; never reads memory contents. Read 'next_actions' out in plain language, in order, not the raw checks."
     ),
     annotations=ToolAnnotations(
         readOnlyHint=True,
@@ -759,12 +863,7 @@ def doctor() -> DoctorResult:
     name="memorysafe_health",
     title="Show memory health",
     description=(
-        "Show local memory counts, storage, governance decisions and the health formula. "
-        "Call this first when the user just installed MemorySafe or asks how to set it up, "
-        "then walk them through restart, the dashboard at http://127.0.0.1:8765/dashboard, "
-        "and one remember-then-find. Pass open=true to also open the visual dashboard; if "
-        "the returned 'opened' is 'window' or 'browser', say it opened rather than pasting "
-        "the link."
+        "Show local memory counts, storage, governance decisions and the health formula. Call it first when the user asks how to set it up. Pass open=true to also open the visual dashboard; if the returned 'opened' is 'window' or 'browser', say it opened rather than pasting the link."
     ),
     annotations=ToolAnnotations(
         readOnlyHint=True,
@@ -838,13 +937,58 @@ def _open_dashboard_window(url: str) -> str:
         return "unavailable"
 
 
+# The health tool is described as counts, and an assistant is told to call it first. It
+# also carries text: the six latest memories, the governance trail's old and new wording,
+# and the three most used. Unclipped, one 10,000-character memory made the answer 5,448
+# tokens, all of it sent to the assistant's provider by a call nobody made to read memories.
+HEALTH_TEXT_CHARS = 200
+
+
+def bounded_health(data: dict[str, Any]) -> dict[str, Any]:
+    """`data` with every piece of memory text in it clipped to HEALTH_TEXT_CHARS. For the
+    tool's answer only: the dashboard page reads its own payload, in full, on this computer."""
+
+    def clip(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        one_line = " ".join(value.split())
+        return one_line if len(one_line) <= HEALTH_TEXT_CHARS else one_line[: HEALTH_TEXT_CHARS - 1].rstrip() + "…"
+
+    for memory in data.get("recent_memories") or []:
+        memory["content"] = clip(memory.get("content"))
+    for event in data.get("governance_events") or []:
+        for key in ("replaced", "kept", "evidence", "reason"):
+            if key in event:
+                event[key] = clip(event[key])
+    for used in (data.get("recall") or {}).get("most_used") or []:
+        used["content"] = clip(used.get("content"))
+    return data
+
+
 def _dashboard_data(open_window: bool = False) -> DashboardResult:
+    if _hosted_mode():
+        # The account's own health (the hosted edition sends the same fields, minus this
+        # computer's), with this computer's dashboard address put back: the window still
+        # opens here, and shows the account's numbers.
+        data = dict(hosted_proxy.call("memorysafe_health", {}))
+        data["database_path"] = str(data.get("stored_in") or "Your hosted account")
+        data["live_token_metrics"] = data.pop("token_estimate", None)
+        data["status"] = "healthy"
+        data.setdefault("recent_memories", [])
+        data["dashboard_url"] = _dashboard_url()
+        data["opened"] = _open_dashboard_window(data["dashboard_url"]) if open_window else None
+        return DashboardResult.model_validate(data)
     data = _store().health()
     data["status"] = "healthy"
     data["recent_memories"] = _store().recent(6)
     data["dashboard_url"] = _dashboard_url()
     data["opened"] = _open_dashboard_window(data["dashboard_url"]) if open_window else None
-    return DashboardResult.model_validate(data)
+    return DashboardResult.model_validate(bounded_health(data))
+
+
+# Every tool's own refusals reach the assistant in their own words (tool_errors).
+for _tool in server._tool_manager.list_tools():
+    _tool.fn = spoken(_tool.fn)
 
 
 def main() -> None:
