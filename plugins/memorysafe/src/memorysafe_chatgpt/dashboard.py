@@ -345,8 +345,8 @@ def dashboard_html(
     <section class="hero">
       <div>
         <div class="eyebrow">MEMORYSAFE · LIVE</div>
-        <h1>Modeled context per turn</h1>
-        <p>Without MemorySafe, every stored fact is restated. With MemorySafe, only the facts actually recalled plus a fixed tool cost.</p>
+        <h1 id="hero-title">Modeled context per turn</h1>
+        <p id="hero-note">Without MemorySafe, every stored fact is restated. With MemorySafe, only the facts actually recalled plus a fixed tool cost.</p>
         <div class="auto-mode">
           <div class="auto-copy">
             <strong>Automatic capture</strong>
@@ -599,11 +599,13 @@ def dashboard_html(
         node.hidden = true;
         return;
       }
+      // When the last memory was saved, by any route: a memory saved by hand counts
+      // too, so nothing here may read as if automatic capture were running.
       const label =
-        state === "never" ? "NEVER CAPTURED"
-        : state === "unknown" ? "CAPTURE AGE UNKNOWN"
-        : state === "active" ? "CAPTURING"
-        : `LAST CAPTURE ${number(data.days_since_last_capture)}D AGO`;
+        state === "never" ? "NOTHING SAVED YET"
+        : state === "unknown" ? "LAST SAVE UNKNOWN"
+        : state === "active" ? (number(data.days_since_last_capture) === 1 ? "SAVED YESTERDAY" : "SAVED TODAY")
+        : `LAST SAVED ${number(data.days_since_last_capture)}D AGO`;
       node.className = "capture-freshness " + state;
       node.textContent = label;
       node.title = String(data.capture_status ?? "");
@@ -907,17 +909,29 @@ def dashboard_html(
         "tokens-with-note",
         `tools + ${recalled} recalled facts`,
       );
+      const breakEvenFacts = number(tokenBenchmark.break_even_facts);
       if (payingOff) {
+        setText("hero-title", "Modeled context per turn");
+        setText("hero-note", "Without MemorySafe, every stored fact is restated. With MemorySafe, only the facts actually recalled plus a fixed tool cost.");
         setText("tokens-saved", savedTokens.toLocaleString());
         setText("tokens-saved-pct", `${Math.round(pctSaved)}% less`);
         setText("tokens-saved-hero", savedTokens.toLocaleString());
         setText("tokens-saved-label", "ESTIMATED TOKENS SAVED / TURN");
         byId("score-ring").style.setProperty("--score", Math.max(0, Math.min(100, pctSaved)));
       } else {
+        // Until the store pays off, the first thing on the page is what it holds, not
+        // a cost that swings with every early memory. The cost stays in the details.
+        setText("hero-title", "Your memory, on this computer");
+        setText(
+          "hero-note",
+          breakEvenFacts
+            ? `Every assistant here reads and saves the same memories. Token savings show here once the store holds about ${breakEvenFacts.toLocaleString()} of them.`
+            : "Every assistant here reads and saves the same memories. Token savings show here once the store holds enough of them.",
+        );
         setText("tokens-saved", "0");
         setText("tokens-saved-pct", extraTokens ? `${extraTokens.toLocaleString()} extra for now` : "not yet paying off");
-        setText("tokens-saved-hero", extraTokens ? `+${extraTokens.toLocaleString()}` : "0");
-        setText("tokens-saved-label", extraTokens ? "EXTRA TOKENS / TURN" : "NOT YET PAYING OFF");
+        setText("tokens-saved-hero", stored.toLocaleString());
+        setText("tokens-saved-label", stored === 1 ? "MEMORY KEPT" : "MEMORIES KEPT");
         byId("score-ring").style.setProperty("--score", 0);
       }
       setText("token-model", "Estimated from tokens counted on this computer. Not anyone’s billed usage.");
@@ -939,7 +953,8 @@ def dashboard_html(
       );
       setText(
         "tech-health",
-        `Health ${number(data.memory_health)} — ${String(data.formula ?? "")} `
+        (data.memory_health == null ? "Health: no score until a memory is saved. " : `Health ${number(data.memory_health)} — `)
+        + `${String(data.formula ?? "")} `
         + "This rates how tidy the store is; it says nothing about whether memories are used.",
       );
       setText("database-path", String(data.database_path ?? "unknown store"));
@@ -1138,7 +1153,8 @@ def dashboard_html(
         message.textContent = "";
         renderAgents(payload.agents, payload.auto_connect ?? null, payload.storage_mode);
         renderLink(payload);
-        if (mode === "local" && payload.signed_out && payload.signed_out.revoked !== undefined) {
+        if (mode === "local" && payload.signed_out && payload.signed_out.revoked !== undefined
+            && payload.signed_out.was_linked !== false) {
           // Coming home signs the device link out; say so, since nothing else does.
           message.hidden = false;
           message.className = "agents-message";
@@ -1846,8 +1862,10 @@ def panel_html(local_api_token: str | None = None) -> str:
     }
 
     function render(data) {
-      const health = Math.round(n(data.memory_health));
-      byId("score").textContent = Number.isFinite(health) ? String(health) : "—";
+      // An empty store has no score: 100 there made the first good memory look like a loss.
+      const scored = data.memory_health !== null && data.memory_health !== undefined;
+      const health = scored ? Math.round(n(data.memory_health)) : 0;
+      byId("score").textContent = scored ? String(health) : "—";
       byId("score-ring").style.setProperty("--score", String(health));
       byId("active").textContent = n(data.active_memories);
       byId("protected").textContent = n(data.protected_memories);
@@ -1860,7 +1878,11 @@ def panel_html(local_api_token: str | None = None) -> str:
       if (["active", "quiet", "stale", "never"].includes(state)) {
         fresh.hidden = false;
         fresh.className = "fresh " + state;
-        fresh.textContent = state === "active" ? "CAPTURING" : state.toUpperCase();
+        // A memory saved by hand counts as well, so this says when, never "capturing".
+        fresh.textContent =
+          state === "active" ? (n(data.days_since_last_capture) === 1 ? "SAVED YESTERDAY" : "SAVED TODAY")
+          : state === "never" ? "NOTHING SAVED YET"
+          : `LAST SAVED ${n(data.days_since_last_capture)}D AGO`;
       } else {
         fresh.hidden = true;
       }

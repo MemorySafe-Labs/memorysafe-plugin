@@ -129,9 +129,15 @@ def _acquire_lock(lock_dir: Path, is_ready) -> bool:
             time.sleep(POLL_SECONDS)
 
 
+# Every console program the build starts runs with no window of its own on Windows.
+# The build already has a hidden console that they inherit; this keeps them hidden
+# when the build is started some other way.
+_NO_WINDOW = {"creationflags": 0x08000000} if os.name == "nt" else {}
+
+
 def _run(command: list, environment: dict | None = None) -> None:
     print("+ " + " ".join(command), flush=True)
-    subprocess.run(command, check=True, env=environment)
+    subprocess.run(command, check=True, env=environment, **_NO_WINDOW)
 
 
 def _force_writable(function, path, _excinfo):
@@ -212,6 +218,7 @@ def _ensure_uv(plugin_dir: Path, data_root: Path) -> str:
         env=_uv_environment(data_root),
         universal_newlines=True,
         check=False,
+        **_NO_WINDOW,
     )
     if completed.returncode != 0:
         raise BuildFailure(completed.returncode, f"ensure_uv exited with {completed.returncode}")
@@ -262,6 +269,7 @@ def _fetch_tokenizer(python: Path, data_root: Path) -> None:
             env=environment,
             timeout=TOKENIZER_FETCH_TIMEOUT_SECONDS,
             check=False,
+            **_NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
         print("The tokenizer download timed out; token counts use a local estimate until it succeeds.", flush=True)

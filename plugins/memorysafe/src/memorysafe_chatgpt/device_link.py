@@ -390,7 +390,8 @@ def sign_out(state_dir: Path, *, http: HttpCall | None = None) -> dict[str, Any]
 
     record = read_link(state_dir)
     if not record:
-        return {"linked": False, "revoked": False, "reached": True}
+        # Nothing was signed in, so there is nothing to report: the dashboard says nothing.
+        return {"linked": False, "was_linked": False, "revoked": False, "reached": True}
     reached = False
     revoked = False
     endpoint = record.get("revocation_endpoint") or f"{record['issuer']}/revoke"
@@ -402,7 +403,7 @@ def sign_out(state_dir: Path, *, http: HttpCall | None = None) -> dict[str, Any]
     except (OSError, LinkError):
         pass
     delete_link(state_dir)
-    return {"linked": False, "revoked": revoked, "reached": reached}
+    return {"linked": False, "was_linked": True, "revoked": revoked, "reached": reached}
 
 
 # -- helpers -------------------------------------------------------------------------------------

@@ -271,7 +271,8 @@ class LiveTokenMetricsResult(BaseModel):
 
 
 class HealthResult(BaseModel):
-    memory_health: int
+    # None while the store holds no memories: there is nothing to rate yet.
+    memory_health: int | None
     active_memories: int
     protected_memories: int
     average_importance: float
@@ -338,7 +339,8 @@ class RecallSummary(BaseModel):
 
 
 class DashboardResult(HealthResult):
-    status: Literal["healthy"]
+    # "empty" until the first memory is saved, so it agrees with capture_status.
+    status: Literal["healthy", "empty"]
     recent_memories: list[MemoryMatch]
     # Undeclared keys are dropped, so recall telemetry never left the server: an
     # assistant asked "is this helping?" and got nothing, while the dashboard looked
@@ -906,8 +908,10 @@ def _open_dashboard_window(url: str) -> str:
         return "disabled"
     quiet = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "stdin": subprocess.DEVNULL}
     if sys.platform == "win32":
+        # The shell opens it with the default browser, and no console window
+        # flashes up the way "cmd /c start" did from a server with no console.
         try:
-            subprocess.Popen(["cmd", "/c", "start", "", url], **quiet)
+            os.startfile(url)  # type: ignore[attr-defined]  # Windows only
             return "browser"
         except OSError:
             return "unavailable"
@@ -979,7 +983,7 @@ def _dashboard_data(open_window: bool = False) -> DashboardResult:
         data["opened"] = _open_dashboard_window(data["dashboard_url"]) if open_window else None
         return DashboardResult.model_validate(data)
     data = _store().health()
-    data["status"] = "healthy"
+    data["status"] = "healthy" if data.get("active_memories") else "empty"
     data["recent_memories"] = _store().recent(6)
     data["dashboard_url"] = _dashboard_url()
     data["opened"] = _open_dashboard_window(data["dashboard_url"]) if open_window else None

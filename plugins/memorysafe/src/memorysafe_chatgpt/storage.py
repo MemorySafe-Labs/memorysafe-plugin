@@ -2280,9 +2280,11 @@ class MemoryStore:
         # Open conflicts are unanswered questions about what is true; each one costs
         # points so the score cannot read "healthy" while contradictions pile up.
         conflict_penalty = min(30, 5 * open_reviews)
+        # No score for an empty store. Every term defaults to perfect there, so it read
+        # 100, and the first good memory saved then lowered it.
         health_score = max(0, round(
             100 * ((0.6 * quality) + (0.3 * protection_coverage) + (0.1 * duplicate_cleanliness))
-        ) - conflict_penalty)
+        ) - conflict_penalty) if total else None
 
         decisions: Counter[str] = Counter()
         recall_events = 0

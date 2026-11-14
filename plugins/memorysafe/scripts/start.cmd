@@ -14,6 +14,7 @@ for /f "usebackq tokens=1,2 delims==" %%A in ("%SCRIPT_DIR%runtime.env") do set 
 rem Claude Desktop leaves the optional directory token unresolved when the field is
 rem blank. It is not a path; fall through to the platform's standard data root.
 if "%MEMORYSAFE_INSTALL_ROOT%"=="${user_config.memory_directory}" set "MEMORYSAFE_INSTALL_ROOT="
+if "%MEMORYSAFE_INSTALL_ROOT%"=="" call :desktop_store
 if "%MEMORYSAFE_INSTALL_ROOT%"=="" set "MEMORYSAFE_INSTALL_ROOT=%LOCALAPPDATA%\MemorySafe"
 set "DATA_ROOT=%MEMORYSAFE_INSTALL_ROOT%"
 
@@ -103,6 +104,21 @@ if not "!ANY_PYTHON!"=="" (
 )
 echo MemorySafe: no usable Python was found and uv could not provide one. See %INSTALL_LOG%>&2
 exit /b 1
+
+:desktop_store
+rem The Claude desktop app from the Microsoft Store runs in an MSIX container, and the
+rem MemorySafe folder it creates under %LOCALAPPDATA% really lives in that app's
+rem LocalCache. Claude Code in a terminal, outside the container, then found no store at
+rem %LOCALAPPDATA%\MemorySafe and started a second, empty one: two memories where the
+rem dashboard promises one. When that folder has no store and the desktop app's has, use
+rem the desktop app's, at its real path. Inside the container the first check finds the
+rem store through the redirection and changes nothing. A store already at
+rem %LOCALAPPDATA%\MemorySafe always wins, so nobody's existing memories move.
+if exist "%LOCALAPPDATA%\MemorySafe\data\memorysafe.sqlite3" exit /b 0
+for /d %%P in ("%LOCALAPPDATA%\Packages\Claude_*") do (
+  if exist "%%~fP\LocalCache\Local\MemorySafe\data\memorysafe.sqlite3" set "MEMORYSAFE_INSTALL_ROOT=%%~fP\LocalCache\Local\MemorySafe"
+)
+exit /b 0
 
 :stage_plugin
 rem The two shims below are run by processes outside the host: a terminal, Cursor, VS Code.

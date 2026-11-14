@@ -59,6 +59,10 @@ DESKTOP_DOWNLOAD = (
 )
 # The user's one answer to "connect your other assistants too?", kept in the state dir.
 DECISION_FILE = "connect-decision.json"
+# Written by the launcher each time Claude Desktop starts MEMORYSAFE as its extension.
+DESKTOP_EXTENSION_RECORD = "claude-desktop-extension.json"
+# What the extension's manifest sets, so the launcher knows which host started it.
+DESKTOP_HOST = "claude-desktop"
 # A connect runs the host's installer, which clones the marketplace from GitHub. Long
 # enough for a slow network, short enough that a hung installer does not hold the
 # dashboard's request forever.
@@ -211,6 +215,54 @@ def _desktop_extension_enabled(desktop: Path) -> bool:
     return False
 
 
+def record_desktop_extension(state_dir: Path, plugin_dir: Path) -> None:
+    """Note that Claude Desktop started this extension, and from which folder.
+
+    The folder search above guesses at how Claude Desktop names and stores extensions,
+    and on a Microsoft Store install it guessed wrong: the extension serving the
+    dashboard was reported as "one step left". The extension itself knows better. The
+    folder is kept resolved, so a process outside the app's container finds it too.
+    """
+
+    try:
+        folder = plugin_dir.resolve()
+    except OSError:
+        folder = plugin_dir
+    write_private_json(state_dir / DESKTOP_EXTENSION_RECORD, {"plugin_dir": str(folder), "seen_at": utc_now()})
+
+
+def _record_state_dirs(env: Mapping[str, str], home: Path, platform: str) -> list[Path]:
+    dirs = []
+    if env.get("MEMORYSAFE_STATE_DIR"):
+        dirs.append(Path(env["MEMORYSAFE_STATE_DIR"]))
+    if platform == "win32":
+        packages = Path(env.get("LOCALAPPDATA") or home / "AppData" / "Local") / "Packages"
+        if packages.is_dir():
+            dirs.extend(sorted(packages.glob("Claude_*/LocalCache/Local/MemorySafe/runtime-state")))
+    return dirs
+
+
+def _desktop_extension_recorded(env: Mapping[str, str], home: Path, platform: str) -> bool:
+    """True while the extension that last recorded itself is still installed and on.
+
+    Uninstalling removes its folder, which ends this. Switching it off in Settings keeps
+    the folder, so Claude Desktop's own setting for that folder is read as well.
+    """
+
+    for state_dir in _record_state_dirs(env, home, platform):
+        folder = read_private_json(state_dir / DESKTOP_EXTENSION_RECORD).get("plugin_dir")
+        if not isinstance(folder, str) or not folder:
+            continue
+        plugin_dir = Path(folder)
+        if not plugin_dir.is_dir():
+            continue
+        settings = _read_json(plugin_dir.parent.parent / "Claude Extensions Settings" / f"{plugin_dir.name}.json")
+        if isinstance(settings, dict) and settings.get("isEnabled") is False:
+            continue
+        return True
+    return False
+
+
 def _desktop_config_registered(desktop: Path) -> bool:
     return claude_registration_present(desktop / "claude_desktop_config.json")
 
@@ -287,7 +339,8 @@ def _claude_desktop(home: Path, env: Mapping[str, str], platform: str) -> dict[s
     entry = _entry("claude_desktop", "Claude Desktop")
     dirs = [path for path in claude_desktop_dirs(home, env, platform) if path.is_dir()]
     entry["present"] = bool(dirs)
-    if any(_desktop_extension_enabled(path) for path in dirs):
+    if _desktop_extension_recorded(env, home, platform) or any(_desktop_extension_enabled(path) for path in dirs):
+        entry["present"] = True
         entry.update(connected=True, how="extension")
     elif any(_desktop_config_registered(path) for path in dirs):
         entry.update(connected=True, how="config")

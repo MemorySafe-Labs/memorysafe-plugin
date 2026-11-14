@@ -13,7 +13,7 @@ import urllib.request
 from pathlib import Path
 
 from .bootstrap_catalog import VERSION
-from . import dashboard_record
+from . import agents, dashboard_record
 # The window opener lives with the dashboard tool that normally calls it; a first start
 # wants the same window, not a second way of making one.
 from .server import _open_dashboard_window, main as run_mcp_server
@@ -55,7 +55,7 @@ def _dashboard_status(host: str, port: int) -> dict | None:
 
 # subprocess exposes these only on Windows; spelled out so this module imports
 # and its tests run on Linux.
-_DETACHED_PROCESS = 0x00000008
+_CREATE_NEW_PROCESS_GROUP = 0x00000200
 _CREATE_NO_WINDOW = 0x08000000
 
 
@@ -97,8 +97,12 @@ def _process_alive(pid: int) -> bool:
 
 
 def _dashboard_spawn_options() -> dict:
+    # Not DETACHED_PROCESS on Windows: Windows ignores CREATE_NO_WINDOW alongside it,
+    # and the venv's Scripts\python.exe is a launcher that starts the real interpreter
+    # as a console child, which then opened a window of its own on every start of
+    # Claude Desktop. A hidden console of its own is inherited by that child instead.
     if os.name == "nt":
-        return {"creationflags": _DETACHED_PROCESS | _CREATE_NO_WINDOW}
+        return {"creationflags": _CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP}
     return {"start_new_session": True}
 
 
@@ -405,7 +409,25 @@ def _spawn_dashboard(host: str, port: int, state_dir: Path, first_start: bool) -
         _open_the_window_in_the_background(host, port)
 
 
+def _record_the_host() -> None:
+    """When Claude Desktop started this as its extension, say so where the dashboard looks.
+
+    Never in the way of starting: a record that cannot be written leaves the dashboard to
+    its folder search, which is what it did before.
+    """
+
+    if os.environ.get("MEMORYSAFE_HOST") != agents.DESKTOP_HOST:
+        return
+    state_dir = Path(os.environ.get("MEMORYSAFE_STATE_DIR") or _default_state_dir()).expanduser()
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        agents.record_desktop_extension(state_dir, Path(__file__).resolve().parents[2])
+    except OSError:
+        pass
+
+
 def main() -> None:
+    _record_the_host()
     _start_dashboard()
     run_mcp_server()
 

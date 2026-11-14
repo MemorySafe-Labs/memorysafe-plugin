@@ -47,7 +47,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PENDING_DEADLINE_SECONDS = 40.0
 # subprocess exposes these only on Windows, so reading them off the module would
 # raise AttributeError on Linux - in CI and in any test that patches os.name.
-_DETACHED_PROCESS = 0x00000008
 _CREATE_NEW_PROCESS_GROUP = 0x00000200
 _CREATE_NO_WINDOW = 0x08000000
 
@@ -57,8 +56,13 @@ def _detached_spawn_options():
     # process, so the next start finds a runtime instead of starting over.
     # start_new_session is POSIX-only - on Windows it is accepted and ignored, so
     # the guarantee above silently did not hold there until these flags were added.
+    #
+    # On Windows the build gets a console of its own with no window, never
+    # DETACHED_PROCESS: a detached process has no console at all, so every console
+    # program it starts (uv, the Python download, pip) opened a visible window of
+    # its own. With a hidden console they inherit it, and nothing appears.
     if os.name == "nt":
-        return {"creationflags": _DETACHED_PROCESS | _CREATE_NEW_PROCESS_GROUP}
+        return {"creationflags": _CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP}
     return {"start_new_session": True}
 
 

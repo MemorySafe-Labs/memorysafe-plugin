@@ -1,7 +1,7 @@
 {
   "name": "memorysafe",
   "displayName": "MemorySafe",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Private local memory governance for Claude.",
   "author": {
     "name": "MemorySafe Labs"
