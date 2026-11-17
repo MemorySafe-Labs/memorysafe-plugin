@@ -46,13 +46,13 @@ HTTP_TIMEOUT_SECONDS = 20
 STOP_LINE_MS = 300
 
 UNSURE = (
-    "Your hosted account did not confirm this change; it may or may not have been saved. "
+    "Your cloud account did not confirm this change; it may or may not have been saved. "
     "Search for it before repeating it."
 )
-UNREADABLE = "Your hosted account answered in a form this plugin does not understand; update the plugin."
+UNREADABLE = "Your cloud account answered in a form this plugin does not understand; update the plugin."
 # The same answer to a write: the account said yes to something, in words this plugin cannot read.
 UNSURE_UNREADABLE = (
-    "Your hosted account answered in a form this plugin does not understand, so this change may "
+    "Your cloud account answered in a form this plugin does not understand, so this change may "
     "or may not have been saved. Search for it before repeating it, and update the plugin."
 )
 

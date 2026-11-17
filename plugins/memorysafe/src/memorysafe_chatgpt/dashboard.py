@@ -31,15 +31,15 @@ def dashboard_html(
   <meta name="color-scheme" content="dark" />
   <style>
     :root {
-      --bg: #05080d;
-      --surface: #0b111b;
-      --surface-2: #101824;
-      --border: rgba(190, 218, 245, 0.13);
-      --text: #f4f8fb;
-      --muted: #8291a5;
-      --dim: #536276;
-      --cyan: #19e4e9;
-      --blue: #4b83ff;
+      --bg: #0e1420;
+      --surface: #141b2a;
+      --surface-2: #1a2336;
+      --border: #263249;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --dim: #7b8ba1;
+      --cyan: #93c5fd;
+      --blue: #3b82f6;
       --green: #52dc88;
       --pink: #ff4c85;
       --amber: #f4b75e;
@@ -48,24 +48,18 @@ def dashboard_html(
     body {
       margin: 0;
       min-width: 0;
-      background:
-        radial-gradient(circle at 86% 0%, rgba(25, 228, 233, .10), transparent 260px),
-        var(--bg);
+      background: var(--bg);
       color: var(--text);
-      font: 16px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font: 16px/1.45 "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     button { font: inherit; }
-    .shell { padding: 18px; }
+    .shell { padding: 18px; max-width: 940px; margin: 0 auto; }
     .topline { display: flex; align-items: center; gap: 11px; }
-    .mark {
-      width: 38px; height: 38px; padding: 7px; display: grid; flex: 0 0 38px;
-      grid-template-columns: 1fr 1fr; gap: 4px; border-radius: 10px;
-      background: #07111a; border: 1px solid rgba(25, 228, 233, .42);
-      box-shadow: 0 0 22px rgba(25, 228, 233, .12);
-    }
-    .mark i { display: block; border-radius: 3px; }
-    .mark i:nth-child(1), .mark i:nth-child(4) { background: var(--cyan); }
-    .mark i:nth-child(2), .mark i:nth-child(3) { background: var(--blue); }
+    .mark { display: grid; flex: 0 0 auto; grid-template-columns: repeat(4, 6px); gap: 3px; margin: 0 4px 0 3px; transform: rotate(-6deg); }
+    .mark i { display: block; width: 6px; height: 6px; border-radius: 50%; background: #3b82f6; }
+    .mark i:nth-child(4n+2) { background: #60a5fa; }
+    .mark i:nth-child(4n+3) { background: #93c5fd; }
+    .mark i:nth-child(4n) { background: #e0f2fe; }
     .brand { min-width: 0; }
     .brand strong { display: block; font-size: 19px; letter-spacing: -.35px; }
     .brand span { display: block; margin-top: 1px; color: var(--muted); font-size: 15px; }
@@ -79,7 +73,7 @@ def dashboard_html(
       color: var(--muted); padding: 7px 9px; cursor: pointer;
     }
     .setup-link, .support-bundle { display: none; text-decoration: none; }
-    .refresh:hover, .setup-link:hover, .support-bundle:hover { border-color: rgba(25, 228, 233, .38); color: var(--text); }
+    .refresh:hover, .setup-link:hover, .support-bundle:hover { border-color: rgba(147, 197, 253, .38); color: var(--text); }
     .refresh:disabled { opacity: .45; cursor: wait; }
     .support-result { margin: 0 0 10px; padding: 10px 12px; border: 1px solid rgba(82,220,136,.18); border-radius: 9px; background: rgba(82,220,136,.05); color: #9fcdb0; font-size: 15px; overflow-wrap: anywhere; }
     /* Collapsed rather than display:none. Screen readers only announce a live region that
@@ -90,24 +84,24 @@ def dashboard_html(
     .hosted-text { margin: 0 0 10px; color: var(--muted); font-size: 14px; line-height: 1.5; }
     .hosted-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 0 0 10px; }
     .plan-key { flex: 1 1 280px; min-width: 0; padding: 9px 11px; border: 1px solid rgba(255,255,255,.14); border-radius: 9px; background: transparent; color: inherit; font: inherit; }
-    .report-form { margin: 0 0 10px; padding: 11px 12px; border: 1px solid rgba(25,228,233,.35); border-radius: 9px; background: rgba(25,228,233,.06); }
+    .report-form { margin: 0 0 10px; padding: 11px 12px; border: 1px solid rgba(147,197,253,.35); border-radius: 9px; background: rgba(147,197,253,.06); }
     .report-form label { display: block; color: #dce5ed; font-size: 15px; font-weight: 700; }
     .report-form label span { display: block; margin-top: 3px; color: var(--dim); font-size: 14px; font-weight: 400; }
     .report-form textarea { display: block; width: 100%; margin: 8px 0; padding: 8px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2); color: var(--text); font-family: inherit; font-size: 15px; line-height: 1.45; resize: vertical; }
-    .report-form textarea:focus { outline: none; border-color: rgba(25,228,233,.5); }
+    .report-form textarea:focus { outline: none; border-color: rgba(147,197,253,.5); }
     .report-actions { display: flex; gap: 7px; flex-wrap: wrap; }
     .hero {
-      margin-top: 17px; padding: 17px; display: grid; grid-template-columns: 1fr auto;
-      gap: 20px; align-items: center; border: 1px solid var(--border); border-radius: 14px;
-      background: linear-gradient(145deg, rgba(25,228,233,.07), rgba(75,131,255,.025) 48%, var(--surface));
+      margin-top: 10px; padding: 20px; display: grid; grid-template-columns: 1fr auto;
+      gap: 20px; align-items: center; border: 1px solid var(--border); border-radius: 16px;
+      background: var(--surface);
     }
     .eyebrow { color: var(--cyan); font: 700 14px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .13em; }
     h1 { margin: 7px 0 5px; font-size: 24px; line-height: 1.1; letter-spacing: -.7px; }
     .hero p { margin: 0; color: var(--muted); font-size: 16px; max-width: 480px; }
     .auto-mode {
       margin-top: 13px; padding: 10px 11px; display: flex; align-items: center; gap: 12px;
-      max-width: 520px; border: 1px solid rgba(75,131,255,.2); border-radius: 10px;
-      background: rgba(75,131,255,.055);
+      max-width: 520px; border: 1px solid rgba(59,130,246,.2); border-radius: 10px;
+      background: rgba(59,130,246,.055);
     }
     .auto-copy { min-width: 0; flex: 1; }
     .auto-copy strong { display: block; font-size: 15px; }
@@ -136,12 +130,12 @@ def dashboard_html(
     .auto-toggle:disabled { opacity: .45; cursor: wait; }
     .score {
       --score: 0; width: 176px; height: 176px; display: grid; place-items: center;
-      border-radius: 50%; position: relative; box-shadow: 0 0 24px rgba(25,228,233,.11);
+      border-radius: 50%; position: relative; box-shadow: 0 0 24px rgba(147,197,253,.11);
       /* A visible track matters more than the arc: every new store sits near zero, and
          a 10% arc on a .07 track just reads as an empty hole in the layout. */
       background: conic-gradient(var(--cyan) calc(var(--score) * 1%), rgba(190,218,245,.18) 0);
     }
-    .score::before { content: ""; position: absolute; inset: 7px; border-radius: inherit; background: #09101a; }
+    .score::before { content: ""; position: absolute; inset: 7px; border-radius: inherit; background: var(--surface); }
     .score-value { position: relative; text-align: center; }
     .score-value strong { display: block; font: 800 28px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
     .score-value span { display: block; margin-top: 4px; color: var(--muted); font-size: 14px; letter-spacing: .03em; line-height: 1.25; max-width: 118px; }
@@ -154,13 +148,15 @@ def dashboard_html(
     .metric-blue strong { color: #82a7ff; }
     .metric-green strong { color: var(--green); }
     .content-grid { margin-top: 10px; display: grid; grid-template-columns: .9fr 1.1fr; gap: 10px; }
-    .panel { padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); min-width: 0; }
+    .panel { padding: 20px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); min-width: 0; }
+    .step-label { display: block; margin-bottom: 5px; color: var(--dim); font: 700 14px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .09em; text-transform: uppercase; }
+    .storage-panel { margin-top: 10px; }
     .panel-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 11px; }
-    .panel-title strong { font-size: 16px; }
+    .panel-title strong { font-size: 19px; letter-spacing: -.2px; }
     .panel-title span { color: var(--dim); font-size: 14px; }
     .compare { display: grid; grid-template-columns: 1fr 18px 1fr; align-items: stretch; gap: 7px; }
     .compare-card { padding: 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid rgba(190,218,245,.08); }
-    .compare-card.with { border-color: rgba(25,228,233,.22); background: rgba(25,228,233,.055); }
+    .compare-card.with { border-color: rgba(147,197,253,.22); background: rgba(147,197,253,.055); }
     .compare-card span { color: var(--muted); font-size: 14px; }
     .compare-card strong { display: block; margin-top: 6px; font: 800 23px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
     .compare-card small { display: block; margin-top: 5px; color: var(--dim); font-size: 14px; }
@@ -173,7 +169,7 @@ def dashboard_html(
     .memory-list { display: grid; gap: 7px; }
     .memory { display: grid; grid-template-columns: 8px 1fr auto; gap: 9px; align-items: start; padding: 9px 10px; border-radius: 9px; background: var(--surface-2); }
     .memory-dot { width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: var(--blue); }
-    .memory.protected .memory-dot { background: var(--cyan); box-shadow: 0 0 7px rgba(25,228,233,.55); }
+    .memory.protected .memory-dot { background: var(--cyan); box-shadow: 0 0 7px rgba(147,197,253,.55); }
     .memory-copy { min-width: 0; }
     .memory-copy p { margin: 0; color: #dce5ed; font-size: 15px; overflow-wrap: anywhere; white-space: pre-line; }
     .memory-copy span { display: block; margin-top: 4px; color: var(--dim); font-size: 14px; }
@@ -189,7 +185,7 @@ def dashboard_html(
     .memory-forget:disabled { opacity: .5; cursor: default; }
     .memory-forget:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
     .empty { padding: 19px 10px; text-align: center; color: var(--muted); font-size: 15px; border: 1px dashed var(--border); border-radius: 9px; }
-    .agents-panel { margin-top: 10px; }
+    .agents-panel { margin-top: 17px; }
     .agent { display: grid; grid-template-columns: 1fr auto; gap: 9px; align-items: center; padding: 9px 10px; border-radius: 9px; background: var(--surface-2); }
     .agent-copy { min-width: 0; }
     .agent-name { display: block; color: #dce5ed; font-size: 15px; font-weight: 700; }
@@ -197,44 +193,48 @@ def dashboard_html(
     .agent-state { font: 700 14px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; padding: 3px 7px; border-radius: 5px; white-space: nowrap; }
     .agent-state.on { color: var(--green); border: 1px solid rgba(82,220,136,.35); }
     .agent-state.off { color: var(--amber); border: 1px solid rgba(244,183,94,.35); }
-    .agent-connect { border: 1px solid rgba(25,228,233,.45); background: rgba(25,228,233,.08); color: var(--cyan);
-      font: 700 14px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .09em; text-transform: uppercase;
-      padding: 4px 9px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
-    .agent-connect:hover { background: rgba(25,228,233,.16); }
+    .agent-connect { border: 1.5px solid #e0f2fe; background: #e0f2fe; color: #0b1220;
+      font-family: inherit; font-size: 14px; font-weight: 600; line-height: 1.1;
+      padding: 9px 14px; border-radius: 9px; cursor: pointer; white-space: nowrap; }
+    .agent-connect:hover { background: #bfdbfe; border-color: #bfdbfe; }
     .agent-connect:disabled { opacity: .5; cursor: wait; }
     .agent-connect:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
     .agents-missing { margin: 9px 0 0; color: var(--dim); font-size: 14px; }
-    .agents-ask { margin-bottom: 9px; padding: 11px 12px; border-radius: 9px; border: 1px solid rgba(25,228,233,.35); background: rgba(25,228,233,.06); }
+    .agents-ask { margin-bottom: 9px; padding: 11px 12px; border-radius: 9px; border: 1px solid rgba(147,197,253,.35); background: rgba(147,197,253,.06); }
     .agents-ask p { margin: 0 0 9px; color: #dce5ed; font-size: 15px; }
     .agents-ask-actions { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
     .agents-ask small { display: block; margin-top: 8px; color: var(--dim); font-size: 14px; }
-    .agents-no, .agents-link { border: 1px solid var(--border); background: transparent; color: var(--muted);
-      font: 700 14px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .09em; text-transform: uppercase;
-      padding: 4px 9px; border-radius: 5px; cursor: pointer; }
-    .agents-no:hover, .agents-link:hover { color: var(--text); border-color: rgba(25,228,233,.38); }
-    .agents-link { padding: 1px 6px; margin-left: 4px; }
+    .agents-no, .agents-link { border: 1.5px solid var(--border); background: transparent; color: var(--text);
+      font-family: inherit; font-size: 14px; font-weight: 600; line-height: 1.1; text-decoration: none;
+      padding: 9px 14px; border-radius: 9px; cursor: pointer; }
+    .agents-no:hover, .agents-link:hover { color: var(--text); border-color: rgba(147,197,253,.38); }
+    .agents-link { margin-left: 4px; }
     .agents-auto { margin: 9px 0 0; color: var(--dim); font-size: 14px; }
-    .agents-mode { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; margin-bottom: 9px; }
+    .agents-mode { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
     .agents-mode-label { color: var(--dim); font: 700 14px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
-    .agents-mode-choice { border: 1px solid var(--border); background: transparent; color: var(--muted);
-      font: 700 14px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .09em; text-transform: uppercase;
-      padding: 4px 9px; border-radius: 5px; cursor: pointer; }
-    .agents-mode-choice:hover { color: var(--text); border-color: rgba(25,228,233,.38); }
-    .agents-mode-choice.on { color: var(--cyan); border-color: rgba(25,228,233,.45); background: rgba(25,228,233,.08); cursor: default; }
+    .agents-mode-choice { text-align: left; border: 1.5px solid var(--border); background: var(--bg); color: var(--text);
+      font: inherit; padding: 16px; border-radius: 14px; cursor: pointer; }
+    .agents-mode-choice strong { display: block; margin-bottom: 4px; font-size: 16.5px; }
+    .agents-mode-choice span { display: block; color: var(--muted); font-size: 14px; line-height: 1.45; }
+    .agents-mode-choice em { display: inline-block; margin-top: 10px; visibility: hidden; color: var(--cyan);
+      font: 700 14px ui-monospace, SFMono-Regular, Menlo, monospace; font-style: normal; letter-spacing: .08em; text-transform: uppercase; }
+    .agents-mode-choice.on em { visibility: visible; }
+    .agents-mode-choice:hover { border-color: rgba(147,197,253,.4); }
+    .agents-mode-choice.on { border-color: var(--cyan); background: #172338; cursor: default; }
     .agents-mode-choice:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
     .agents-hosted { margin: 0 0 9px; padding: 11px 12px; border-radius: 9px; border: 1px solid var(--border); color: var(--dim); font-size: 14px; }
     .agents-hosted p { margin: 0; }
     .agents-hosted a { color: var(--cyan); }
     .agents-hosted #agents-local-count { margin: 8px 0 0; color: var(--muted); }
-    .agents-link { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--border); }
-    .agents-link p { margin: 0 0 8px; color: var(--text); }
-    .agents-link small { display: block; margin-top: 6px; color: var(--muted); line-height: 1.4; }
+    .device-link { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--border); }
+    .device-link p { margin: 0 0 8px; color: var(--text); font-size: 15px; }
+    .device-link small { display: block; margin-top: 6px; color: var(--muted); font-size: 14px; line-height: 1.4; }
     .agents-message { margin: 9px 0 0; color: #9fcdb0; font-size: 14px; overflow-wrap: anywhere; }
     .agents-message.bad { color: var(--amber); }
-    .token-panel { margin-top: 10px; background: linear-gradient(145deg, rgba(75,131,255,.07), rgba(25,228,233,.025) 62%, var(--surface)); }
+    .token-panel { margin-top: 10px; }
     .token-badge { color: #8eabef !important; font: 700 14px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
     .token-live-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-    .token-live-stat { padding: 11px 12px; border: 1px solid rgba(25,228,233,.15); border-radius: 10px; background: rgba(25,228,233,.04); min-width: 0; }
+    .token-live-stat { padding: 11px 12px; border: 1px solid rgba(147,197,253,.15); border-radius: 10px; background: rgba(147,197,253,.04); min-width: 0; }
     .token-live-stat span { display: block; color: var(--muted); font-size: 14px; }
     .token-live-stat strong { display: block; margin: 6px 0 3px; color: var(--cyan); font: 800 20px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
     .token-live-stat small { color: var(--dim); font-size: 14px; }
@@ -255,20 +255,20 @@ def dashboard_html(
     .token-section-label { display: flex; align-items: center; gap: 9px; margin: 12px 1px 8px; color: #8eabef; font: 700 14px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
     .token-section-label::after { content: ""; height: 1px; flex: 1; background: rgba(142,171,239,.13); }
     .token-grid { display: grid; grid-template-columns: .72fr .72fr 1.28fr 1.28fr; gap: 8px; }
-    .token-stat, .token-saving { padding: 12px; border: 1px solid rgba(190,218,245,.09); border-radius: 10px; background: rgba(5,8,13,.42); min-width: 0; }
+    .token-stat, .token-saving { padding: 12px; border: 1px solid rgba(190,218,245,.09); border-radius: 10px; background: rgba(14,20,32,.42); min-width: 0; }
     .token-stat span, .token-saving span { display: block; color: var(--muted); font-size: 14px; }
     .token-stat strong { display: block; margin: 6px 0 3px; color: #a9bdff; font: 800 21px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
     .token-stat small { color: var(--dim); font-size: 14px; }
     .token-saving-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
     .token-saving-head strong { color: var(--green); font: 800 17px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
     .token-bar { height: 5px; margin-top: 10px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.07); }
-    .token-bar i { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--blue), var(--cyan)); box-shadow: 0 0 9px rgba(25,228,233,.3); transition: width .35s ease; }
+    .token-bar i { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--blue), var(--cyan)); box-shadow: 0 0 9px rgba(147,197,253,.3); transition: width .35s ease; }
     .token-note { margin: 9px 1px 0; color: var(--dim); font-size: 14px; }
     .token-note strong { color: var(--amber); }
     .formula { margin-top: 10px; padding: 10px 12px; display: flex; gap: 9px; align-items: flex-start; border: 1px solid rgba(244,183,94,.11); border-radius: 10px; background: rgba(244,183,94,.035); color: #9b8a72; font-size: 14px; }
     .formula strong { flex: 0 0 auto; color: var(--amber); }
     .error { margin-top: 12px; padding: 10px 12px; border-radius: 9px; background: rgba(255,76,133,.07); color: #f1a3bb; display: none; }
-    .notice { margin-top: 12px; padding: 10px 12px; border-radius: 9px; background: rgba(25,228,233,.07); color: var(--text); display: none; font-size: 16px; }
+    .notice { margin-top: 12px; padding: 10px 12px; border-radius: 9px; background: rgba(147,197,253,.07); color: var(--text); display: none; font-size: 16px; }
     .notice a { color: var(--cyan); }
     @media (max-width: 620px) {
       .shell { padding: 12px; }
@@ -322,7 +322,7 @@ def dashboard_html(
 <body>
   <main class="shell">
     <header class="topline">
-      <div class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
       <div class="brand"><strong>MemorySafe</strong><span>Private local memory governance</span></div>
       <div class="live" id="live-label">LOCAL · PRIVATE</div>
       <a class="setup-link" id="setup-link" href="/">Setup</a>
@@ -342,6 +342,49 @@ def dashboard_html(
     </div>
     <div class="support-result" id="support-result" role="status"></div>
 
+    <section class="panel agents-panel" id="agents-panel" aria-label="Your assistants" hidden>
+      <span class="step-label">Step 1</span>
+      <div class="panel-title"><strong>Connect your assistants</strong><span id="agents-note">ON THIS COMPUTER</span></div>
+      <div class="agents-ask" id="agents-ask" hidden>
+        <p id="agents-ask-text"></p>
+        <div class="agents-ask-actions">
+          <button class="agent-connect" id="agents-yes" type="button">Yes, connect them</button>
+          <button class="agents-no" id="agents-no" type="button">No thanks</button>
+        </div>
+        <small>Your answer is remembered. Yes also connects assistants you install later, the next time MemorySafe starts.</small>
+      </div>
+      <div class="memory-list" id="agents"></div>
+      <p class="agents-missing" id="agents-missing" hidden></p>
+      <p class="agents-auto" id="agents-auto" hidden>Assistants you install later connect automatically.<button class="agents-link" id="agents-auto-off" type="button">Turn off</button></p>
+      <p class="agents-message" id="agents-message" hidden></p>
+    </section>
+    <section class="panel storage-panel" id="storage-panel" aria-label="Where your memories live" hidden>
+      <span class="step-label">Step 2</span>
+      <div class="panel-title"><strong>Where should your memories live?</strong></div>
+      <div class="agents-mode" id="agents-mode" hidden>
+        <button class="agents-mode-choice" id="mode-local" type="button"><strong>On this computer</strong><span>No account. Nothing is uploaded.</span><em>Selected</em></button>
+        <button class="agents-mode-choice" id="mode-hosted" type="button"><strong>In my cloud account</strong><span>The same memory on every device. Sign in once.</span><em>Selected</em></button>
+      </div>
+      <div class="agents-hosted" id="agents-hosted" hidden>
+        <p>Each assistant connects to your account from its own settings; the steps are on
+        <a href="https://memory.memorysafe.ca/connect" target="_blank" rel="noopener">your cloud Connect page</a>.
+        This choice moves no memories: to take the ones on this computer with you, export them below and
+        import the file on your account page. The way back works too: download the move file from your
+        account page, set memories to live on this computer again, and import it below.</p>
+        <p>The numbers and memories on this page are still the ones left on this computer. Your account's are on
+        <a href="https://memory.memorysafe.ca/account" target="_blank" rel="noopener">your account page</a>.</p>
+        <p id="agents-local-count" hidden></p>
+        <div class="device-link" id="agents-link">
+          <p id="agents-link-text"></p>
+          <div class="agents-ask-actions">
+            <button class="agent-connect" id="link-signin" type="button">Sign in to your account</button>
+            <button class="agents-no" id="link-signout" type="button" hidden>Sign out</button>
+          </div>
+          <small id="agents-link-note"></small>
+        </div>
+      </div>
+      <p class="agents-message" id="storage-message" hidden></p>
+    </section>
     <section class="hero">
       <div>
         <div class="eyebrow">MEMORYSAFE · LIVE</div>
@@ -365,71 +408,21 @@ def dashboard_html(
         </div>
       </div>
     </section>
-    <section class="panel agents-panel" id="agents-panel" aria-label="Your assistants" hidden>
-      <div class="panel-title"><strong>One memory, every assistant</strong><span id="agents-note">ON THIS COMPUTER</span></div>
-      <div class="agents-mode" id="agents-mode" hidden>
-        <span class="agents-mode-label">MEMORIES LIVE</span>
-        <button class="agents-mode-choice" id="mode-local" type="button">On this computer</button>
-        <button class="agents-mode-choice" id="mode-hosted" type="button">In my hosted account</button>
+    <section class="content-grid">
+      <div class="panel">
+        <div class="panel-title"><strong>Recent memories</strong><span id="memory-count">0 MEMORIES</span></div>
+        <div class="memory-list" id="memories"><div class="empty">No memories stored yet.</div></div>
       </div>
-      <div class="agents-hosted" id="agents-hosted" hidden>
-        <p>Each assistant connects to your account from its own settings; the steps are on
-        <a href="https://memory.memorysafe.ca/connect" target="_blank" rel="noopener">your hosted Connect page</a>.
-        This choice moves no memories: to take the ones on this computer with you, export them below and
-        import the file on your account page. The way back works too: download the move file from your
-        account page, set memories to live on this computer again, and import it below.</p>
-        <p>The numbers and memories on this page are still the ones left on this computer. Your account's are on
-        <a href="https://memory.memorysafe.ca/account" target="_blank" rel="noopener">your account page</a>.</p>
-        <p id="agents-local-count" hidden></p>
-        <div class="agents-link" id="agents-link">
-          <p id="agents-link-text"></p>
-          <div class="agents-ask-actions">
-            <button class="agent-connect" id="link-signin" type="button">Sign in to your account</button>
-            <button class="agents-no" id="link-signout" type="button" hidden>Sign out</button>
-          </div>
-          <small id="agents-link-note"></small>
-        </div>
-      </div>
-      <div class="agents-ask" id="agents-ask" hidden>
-        <p id="agents-ask-text"></p>
-        <div class="agents-ask-actions">
-          <button class="agent-connect" id="agents-yes" type="button">Yes, connect them</button>
-          <button class="agents-no" id="agents-no" type="button">No thanks</button>
-        </div>
-        <small>Your answer is remembered. Yes also connects assistants you install later, the next time MemorySafe starts.</small>
-      </div>
-      <div class="memory-list" id="agents"></div>
-      <p class="agents-missing" id="agents-missing" hidden></p>
-      <p class="agents-auto" id="agents-auto" hidden>Assistants you install later connect automatically.<button class="agents-link" id="agents-auto-off" type="button">Turn off</button></p>
-      <p class="agents-message" id="agents-message" hidden></p>
+      <details class="panel fold-panel">
+        <summary><strong>Most used</strong><span>BY RECALL</span></summary>
+        <div class="memory-list" id="most-used"><div class="empty">Nothing has been recalled yet.</div></div>
+      </details>
     </section>
-    <section class="panel hosted-panel" id="hosted-panel" aria-label="Take your memory everywhere">
-      <div class="panel-title"><strong>Take your memory everywhere</strong><span>MEMORYSAFE HOSTED · FREE</span></div>
-      <p class="hosted-text">Hosted gives every assistant you use, on every device, this same memory. Export a copy here, then import it into your Hosted account; nothing leaves this computer until you upload the file yourself.</p>
-      <div class="hosted-actions">
-        <button class="agent-connect" id="hosted-export" type="button">Export my memories for Hosted</button>
-        <a class="agents-link" href="https://memory.memorysafe.ca/account/start?signup=1&amp;next=/account/import&amp;lang=en" target="_blank" rel="noopener">Create a free Hosted account</a>
-      </div>
-      <div class="support-result" id="hosted-result" role="status"></div>
-      <p class="hosted-text hosted-return">Coming back from Hosted? Download the move file from
-        <a href="https://memory.memorysafe.ca/account/export" target="_blank" rel="noopener">your account page</a>,
-        then choose it here. Memories already on this computer are kept: duplicates merge, and a conflict is flagged
-        for you to decide. Nothing on your account changes.</p>
-      <div class="hosted-actions">
-        <input id="hosted-import-file" type="file" accept="application/json,.json" hidden>
-        <button class="agent-connect" id="hosted-import" type="button">Import a move file</button>
-      </div>
-      <div class="support-result" id="hosted-import-result" role="status"></div>
-    </section>
-    <section class="panel hosted-panel" id="plan-panel" aria-label="Your plan" hidden>
-      <div class="panel-title"><strong>Your plan</strong><span id="plan-note"></span></div>
-      <p class="hosted-text" id="plan-text"></p>
-      <div class="hosted-actions">
-        <input class="plan-key" id="plan-key" type="text" autocomplete="off" spellcheck="false" placeholder="Plan key from your account page" aria-label="Plan key">
-        <button class="agent-connect" id="plan-save" type="button">Use this key</button>
-        <button class="agent-connect" id="plan-remove" type="button" hidden>Remove the key</button>
-      </div>
-      <div class="support-result" id="plan-result" role="status"></div>
+    <section class="metrics" aria-label="What MemorySafe gave back">
+      <div class="metric metric-green"><span>Memory searches</span><strong id="recall-count">—</strong><small>find calls recorded by MemorySafe</small></div>
+      <div class="metric metric-cyan"><span>Memories used</span><strong id="recall-used">—</strong><small id="recall-used-note">of those stored</small></div>
+      <div class="metric metric-blue"><span>Never used</span><strong id="recall-unused">—</strong><small>stored, never recalled</small></div>
+      <div class="metric"><span>Active memories</span><strong id="active">—</strong><small id="protected-note">available for recall</small></div>
     </section>
     <details class="panel token-panel fold-panel" aria-label="Tokens with and without MemorySafe">
       <summary><strong>With vs without MemorySafe</strong><span class="token-badge">THIS STORE · THIS TURN</span></summary>
@@ -458,21 +451,33 @@ def dashboard_html(
       </div>
       <p class="token-note" id="token-model">Estimated from tokens counted on this computer. Not anyone’s billed usage.</p>
     </details>
-    <section class="metrics" aria-label="What MemorySafe gave back">
-      <div class="metric metric-green"><span>Memory searches</span><strong id="recall-count">—</strong><small>find calls recorded by MemorySafe</small></div>
-      <div class="metric metric-cyan"><span>Memories used</span><strong id="recall-used">—</strong><small id="recall-used-note">of those stored</small></div>
-      <div class="metric metric-blue"><span>Never used</span><strong id="recall-unused">—</strong><small>stored, never recalled</small></div>
-      <div class="metric"><span>Active memories</span><strong id="active">—</strong><small id="protected-note">available for recall</small></div>
-    </section>
-    <section class="content-grid">
-      <div class="panel">
-        <div class="panel-title"><strong>Recent memories</strong><span id="memory-count">0 MEMORIES</span></div>
-        <div class="memory-list" id="memories"><div class="empty">No memories stored yet.</div></div>
+    <section class="panel hosted-panel" id="hosted-panel" aria-label="Take your memory everywhere">
+      <div class="panel-title"><strong>Take your memory everywhere</strong><span>CLOUD ACCOUNT · FREE</span></div>
+      <p class="hosted-text">MemorySafe Cloud gives every assistant you use, on every device, this same memory. Export a copy here, then import it into your cloud account; nothing leaves this computer until you upload the file yourself.</p>
+      <div class="hosted-actions">
+        <button class="agent-connect" id="hosted-export" type="button">Export my memories for the cloud</button>
+        <a class="agents-link" href="https://memory.memorysafe.ca/account/start?signup=1&amp;next=/account/import&amp;lang=en" target="_blank" rel="noopener">Create a free cloud account</a>
       </div>
-      <details class="panel fold-panel">
-        <summary><strong>Most used</strong><span>BY RECALL</span></summary>
-        <div class="memory-list" id="most-used"><div class="empty">Nothing has been recalled yet.</div></div>
-      </details>
+      <div class="support-result" id="hosted-result" role="status"></div>
+      <p class="hosted-text hosted-return">Coming back from the cloud? Download the move file from
+        <a href="https://memory.memorysafe.ca/account/export" target="_blank" rel="noopener">your account page</a>,
+        then choose it here. Memories already on this computer are kept: duplicates merge, and a conflict is flagged
+        for you to decide. Nothing on your account changes.</p>
+      <div class="hosted-actions">
+        <input id="hosted-import-file" type="file" accept="application/json,.json" hidden>
+        <button class="agent-connect" id="hosted-import" type="button">Import a move file</button>
+      </div>
+      <div class="support-result" id="hosted-import-result" role="status"></div>
+    </section>
+    <section class="panel hosted-panel" id="plan-panel" aria-label="Your plan" hidden>
+      <div class="panel-title"><strong>Your plan</strong><span id="plan-note"></span></div>
+      <p class="hosted-text" id="plan-text"></p>
+      <div class="hosted-actions">
+        <input class="plan-key" id="plan-key" type="text" autocomplete="off" spellcheck="false" placeholder="Plan key from your account page" aria-label="Plan key">
+        <button class="agent-connect" id="plan-save" type="button">Use this key</button>
+        <button class="agent-connect" id="plan-remove" type="button" hidden>Remove the key</button>
+      </div>
+      <div class="support-result" id="plan-result" role="status"></div>
     </section>
     <details class="panel fold-panel" aria-label="Governance trail" id="governance-panel" hidden>
       <summary><strong>Governance trail</strong><span id="governance-note">EVERY DECISION, WITH ITS REASON</span></summary>
@@ -880,7 +885,7 @@ def dashboard_html(
       const termsNotice = byId("terms-notice");
       if (termsNotice) {
         if (data.terms_update_pending) {
-          termsNotice.textContent = `${String(data.legal_change_note ?? "The Beta Terms or Privacy Policy changed.")} Nothing has stopped working. `;
+          termsNotice.textContent = `${String(data.legal_change_note ?? "The Terms or Privacy Policy changed.")} Nothing has stopped working. `;
           const review = document.createElement("a");
           review.href = "/";
           review.textContent = "Read it and accept it in Setup";
@@ -1044,8 +1049,9 @@ def dashboard_html(
       const hostedMode = storageMode === "hosted";
       const panel = byId("agents-panel");
       const list = byId("agents");
-      if (!Array.isArray(agents) || !agents.length) { panel.hidden = true; return; }
+      if (!Array.isArray(agents) || !agents.length) { panel.hidden = true; byId("storage-panel").hidden = true; return; }
       panel.hidden = false;
+      byId("storage-panel").hidden = false;
       byId("agents-mode").hidden = false;
       byId("mode-local").classList.toggle("on", !hostedMode);
       byId("mode-hosted").classList.toggle("on", hostedMode);
@@ -1085,8 +1091,8 @@ def dashboard_html(
           // its tools are answered by the account, through the sign-in above.
           const viaPlugin = agent.connected || agent.covered;
           copy.append(agentNode("span", "agent-note", viaPlugin
-            ? "Connected through the plugin on this computer, which reads and saves in your account once you have signed in above."
-            : "Connect it to your account from the hosted Connect page. Its account connection cannot be checked from here."));
+            ? "Connected through the plugin on this computer, which reads and saves in your account once you have signed in below."
+            : "Connect it to your account from the cloud Connect page. Its account connection cannot be checked from here."));
           row.append(copy);
           if (viaPlugin) row.append(agentNode("span", "agent-state", "THROUGH THE PLUGIN"));
           list.append(row);
@@ -1134,7 +1140,7 @@ def dashboard_html(
       // The person's one choice of where memories live. Saving it moves no memories and
       // connects nothing; it changes what this panel offers.
       if (mode === storageMode) return;
-      const message = byId("agents-message");
+      const message = byId("storage-message");
       const buttons = [byId("mode-local"), byId("mode-hosted")];
       buttons.forEach((button) => { button.disabled = true; });
       try {
@@ -1159,10 +1165,10 @@ def dashboard_html(
           message.hidden = false;
           message.className = "agents-message";
           message.textContent = payload.signed_out.revoked
-            ? "Memories live on this computer again. The plugin's sign-in to your hosted account was ended, on this and any other computer using it; your memories there were not changed."
+            ? "Memories live on this computer again. The plugin's sign-in to your cloud account was ended, on this and any other computer using it; your memories there were not changed."
             : payload.signed_out.reached
-              ? "Memories live on this computer again. The sign-in was removed here, but your hosted account did not confirm ending it elsewhere; end it from your account page if you want that."
-              : "Memories live on this computer again. Your hosted account could not be reached, so the sign-in was removed here only.";
+              ? "Memories live on this computer again. The sign-in was removed here, but your cloud account did not confirm ending it elsewhere; end it from your account page if you want that."
+              : "Memories live on this computer again. Your cloud account could not be reached, so the sign-in was removed here only.";
         }
       } catch (error) {
         message.hidden = false;
@@ -1193,8 +1199,8 @@ def dashboard_html(
       if (!hostedMode) { if (linkWatch) { clearInterval(linkWatch); linkWatch = null; } return; }
       const since = link.linked_at ? new Date(link.linked_at) : null;
       setText("agents-link-text", link.linked
-        ? `This computer is signed in to your hosted account${since && !Number.isNaN(since.valueOf()) ? ` since ${since.toLocaleDateString()}` : ""}.`
-        : "This computer is not signed in to your hosted account yet. Sign in once here; every assistant connected through the plugin shares it.");
+        ? `This computer is signed in to your cloud account${since && !Number.isNaN(since.valueOf()) ? ` since ${since.toLocaleDateString()}` : ""}.`
+        : "This computer is not signed in to your cloud account yet. Sign in once here; every assistant connected through the plugin shares it.");
       byId("link-signin").hidden = !!link.linked;
       byId("link-signout").hidden = !link.linked;
       setText("agents-link-note", link.linked
@@ -1205,7 +1211,7 @@ def dashboard_html(
 
     byId("link-signin").addEventListener("click", async () => {
       const button = byId("link-signin");
-      const message = byId("agents-message");
+      const message = byId("storage-message");
       button.disabled = true;
       // Opened now, inside the click: a browser blocks a tab opened after an await, and the
       // start call below can take seconds. The address is filled in when it is known.
@@ -1254,7 +1260,7 @@ def dashboard_html(
 
     byId("link-signout").addEventListener("click", async () => {
       const button = byId("link-signout");
-      const message = byId("agents-message");
+      const message = byId("storage-message");
       button.disabled = true;
       try {
         const response = await fetch("/api/link/signout", {
@@ -1270,10 +1276,10 @@ def dashboard_html(
         message.hidden = false;
         message.className = "agents-message";
         message.textContent = payload.signed_out?.revoked
-          ? "Signed out. The plugin's sign-in to your hosted account was ended on every computer using it; your memories there were not changed."
+          ? "Signed out. The plugin's sign-in to your cloud account was ended on every computer using it; your memories there were not changed."
           : payload.signed_out?.reached
-            ? "Signed out here. Your hosted account did not confirm ending the sign-in, so it may still count there until it expires or you end it from your account page."
-            : "Signed out here. Your hosted account could not be reached, so the sign-in still counts there until it expires or you end it from your account page.";
+            ? "Signed out here. Your cloud account did not confirm ending the sign-in, so it may still count there until it expires or you end it from your account page."
+            : "Signed out here. Your cloud account could not be reached, so the sign-in still counts there until it expires or you end it from your account page.";
       } catch (error) {
         message.hidden = false;
         message.className = "agents-message bad";
@@ -1667,14 +1673,14 @@ _HOSTED_WORDING = (
         '<section class="panel hosted-panel" id="hosted-panel" aria-label="Take your memory everywhere" hidden>',
     ),
     (
-        '<p class="hosted-text">Hosted gives every assistant you use, on every device, this same memory. '
-        "Export a copy here, then import it into your Hosted account; nothing leaves this computer "
+        '<p class="hosted-text">MemorySafe Cloud gives every assistant you use, on every device, this same memory. '
+        "Export a copy here, then import it into your cloud account; nothing leaves this computer "
         "until you upload the file yourself.</p>",
         '<p class="hosted-text"></p>',
     ),
     # The storage-mode chooser stays hidden on the hosted page (renderAgents never runs
     # there), but its static label must not call the device a computer the page is not on.
-    (">On this computer</button>", ">On this device</button>"),
+    (">On this computer</strong>", ">On this device</strong>"),
     ("on this computer", "on this device"),
 )
 
@@ -1706,36 +1712,31 @@ def panel_html(local_api_token: str | None = None) -> str:
   <title>MemorySafe</title>
   <style>
     :root {
-      --bg: #05080d;
-      --surface: #0b111b;
-      --border: rgba(190, 218, 245, 0.13);
-      --text: #f4f8fb;
-      --muted: #8291a5;
-      --dim: #536276;
-      --cyan: #19e4e9;
-      --blue: #4b83ff;
+      --bg: #0e1420;
+      --surface: #141b2a;
+      --border: #263249;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --dim: #7b8ba1;
+      --cyan: #93c5fd;
+      --blue: #3b82f6;
       --green: #52dc88;
       --pink: #ff4c85;
       --amber: #f4b75e;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
-      font: 16px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      font: 16px/1.4 "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     body {
-      background:
-        radial-gradient(circle at 88% -10%, rgba(25, 228, 233, .12), transparent 180px),
-        var(--bg);
+      background: var(--bg);
     }
     .shell { padding: 14px 14px 12px; min-height: 100%; display: flex; flex-direction: column; gap: 12px; }
     header { display: flex; align-items: center; gap: 10px; }
-    .mark {
-      width: 32px; height: 32px; padding: 6px; display: grid; flex: 0 0 32px;
-      grid-template-columns: 1fr 1fr; gap: 3px; border-radius: 8px;
-      background: #07111a; border: 1px solid rgba(25, 228, 233, .42);
-    }
-    .mark i { display: block; border-radius: 2px; }
-    .mark i:nth-child(1), .mark i:nth-child(4) { background: var(--cyan); }
-    .mark i:nth-child(2), .mark i:nth-child(3) { background: var(--blue); }
+    .mark { display: grid; flex: 0 0 auto; grid-template-columns: repeat(4, 6px); gap: 3px; margin: 0 4px 0 3px; transform: rotate(-6deg); }
+    .mark i { display: block; width: 6px; height: 6px; border-radius: 50%; background: #3b82f6; }
+    .mark i:nth-child(4n+2) { background: #60a5fa; }
+    .mark i:nth-child(4n+3) { background: #93c5fd; }
+    .mark i:nth-child(4n) { background: #e0f2fe; }
     .brand strong { display: block; font-size: 16px; letter-spacing: -.3px; }
     .brand span { display: block; color: var(--muted); font-size: 9px; }
     .live { margin-left: auto; color: #a6d9b8; font: 700 14px/1 ui-monospace, Menlo, monospace; letter-spacing: .08em; }
@@ -1744,7 +1745,7 @@ def panel_html(local_api_token: str | None = None) -> str:
     .hero {
       padding: 12px; display: flex; gap: 12px; align-items: center;
       border: 1px solid var(--border); border-radius: 12px;
-      background: linear-gradient(145deg, rgba(25,228,233,.07), var(--surface));
+      background: linear-gradient(145deg, rgba(147,197,253,.07), var(--surface));
     }
     .score {
       --score: 0; width: 72px; height: 72px; flex: 0 0 72px; display: grid; place-items: center;
@@ -1769,7 +1770,7 @@ def panel_html(local_api_token: str | None = None) -> str:
     .metric strong { display: block; margin-top: 3px; font: 800 18px/1 ui-monospace, Menlo, monospace; }
     .auto {
       padding: 10px 11px; display: flex; align-items: center; gap: 10px;
-      border: 1px solid rgba(75,131,255,.2); border-radius: 10px; background: rgba(75,131,255,.055);
+      border: 1px solid rgba(59,130,246,.2); border-radius: 10px; background: rgba(59,130,246,.055);
     }
     .auto div { min-width: 0; flex: 1; }
     .auto strong { display: block; font-size: 11px; }
@@ -1788,7 +1789,7 @@ def panel_html(local_api_token: str | None = None) -> str:
       border-top: 1px solid rgba(190,218,245,.06); }
     .row:first-of-type { border-top: 0; }
     .dot { width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: var(--blue); }
-    .row.protected .dot { background: var(--cyan); box-shadow: 0 0 6px rgba(25,228,233,.55); }
+    .row.protected .dot { background: var(--cyan); box-shadow: 0 0 6px rgba(147,197,253,.55); }
     .row p { margin: 0; font-size: 11px; color: #dce5ed; overflow-wrap: anywhere; white-space: pre-line; }
     .row em { display: block; margin-top: 2px; color: var(--dim); font-style: normal; font-size: 8px; }
     .empty { color: var(--muted); font-size: 11px; padding: 12px 0; text-align: center; }
@@ -1798,14 +1799,14 @@ def panel_html(local_api_token: str | None = None) -> str:
       padding: 8px 9px; border-radius: 9px; font-size: 11px;
       border: 1px solid var(--border); background: rgba(255,255,255,.025); color: var(--muted);
     }
-    footer a.primary { border-color: rgba(25,228,233,.35); color: var(--cyan); }
+    footer a.primary { border-color: rgba(147,197,253,.35); color: var(--cyan); }
     .error { display: none; color: #f1a3bb; font-size: 10px; }
   </style>
 </head>
 <body>
   <div class="shell">
     <header>
-      <div class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
       <div class="brand"><strong>MemorySafe</strong><span>On this computer</span></div>
       <div class="live">LOCAL</div>
     </header>

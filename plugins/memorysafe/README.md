@@ -1,4 +1,4 @@
-# MemorySafe 0.5.1
+# MemorySafe 0.5.2
 
 Private, governed memory for Claude Code, Claude Desktop and Codex, kept in one SQLite
 file on your own computer. macOS, Linux and Windows. Free, and open source under the
@@ -22,7 +22,7 @@ Install MemorySafe in whichever assistant you use most, using its section below.
 whether to connect them to the same memory. Say yes and it connects them, each through its own
 installer, and connects any you install later too. Remove MemorySafe from one of them later and
 it stays removed. Claude Desktop asks you to confirm extensions yourself, so for it the
-dashboard's **One memory, every assistant** panel shows the one step to take.
+dashboard's **Connect your assistants** panel shows the one step to take.
 
 From a terminal, `memorysafe connect` shows the same list and changes nothing;
 `memorysafe connect --apply` connects them:
@@ -58,7 +58,7 @@ memory: safety notes and your preferences first. The other runs each time you se
 and reads it there. While automatic capture is off it saves nothing and stays silent; once you
 turn it on, it saves a preference you state plainly ("always use Black") itself and reminds
 Claude to offer the other lasting facts you stated. A one-off instruction ("don't add tests
-yet") is not a preference and is not saved. If you chose "In my hosted account", neither hook
+yet") is not a preference and is not saved. If you chose "In my cloud account", neither hook
 reads or writes the file on this computer. The hooks do not run on Windows.
 
 ## Claude Desktop
@@ -95,9 +95,9 @@ Give your client that path as the command to run, with no arguments. It needs Me
 installed in one of the three assistants above first, since it is that plugin's launcher
 the command reaches.
 
-## The same memory on every device: MemorySafe Hosted
+## The same memory on every device: MemorySafe Cloud
 
-The plugin keeps your memory on one computer. MemorySafe Hosted gives Claude, ChatGPT,
+The plugin keeps your memory on one computer. MemorySafe Cloud gives Claude, ChatGPT,
 Codex, Cursor and the other assistants you use one shared memory on every device, hosted
 in Montréal. It is available now, and free while we keep improving it. Sign in at
 <https://memory.memorysafe.ca/>, then add <https://memory.memorysafe.ca/mcp> to each app;
@@ -111,7 +111,7 @@ build through uv, hash-pinned packages from PyPI, and the tokenizer data it coun
 with, all into the MemorySafe folder. That takes a minute or two, once. After that,
 nothing leaves this computer, with two exceptions you choose yourself. Connecting another
 assistant to MemorySafe: that assistant's own installer then downloads the plugin from GitHub.
-Choosing "In my hosted account" on the dashboard and signing in: from then on every memory
+Choosing "In my cloud account" on the dashboard and signing in: from then on every memory
 your assistants save or search goes to memory.memorysafe.ca, your own account and nothing
 else, and the dashboard shows it. The memories already on this computer stay here, and the
 assistants no longer read or change them; `memorysafe erase --everything "erase everything"`
@@ -238,8 +238,8 @@ you redistribute.
 
 The MemorySafe name and logo are trademarks and are not part of the licence; the
 [trademark policy](TRADEMARKS.md) says what you can do with them without asking (saying your
-project uses or bundles MemorySafe is fine). The optional beta programme has its own
-[Terms of Use](TERMS.md) and [Privacy Policy](PRIVACY.md), and MemorySafe Hosted has its own at
+project uses or bundles MemorySafe is fine). MemorySafe's optional services, such as support, have their own
+[Terms of Use](TERMS.md) and [Privacy Policy](PRIVACY.md), and MemorySafe Cloud has its own at
 <https://memory.memorysafe.ca/terms> and <https://memory.memorysafe.ca/privacy>; neither limits
 your rights under the licence.
 

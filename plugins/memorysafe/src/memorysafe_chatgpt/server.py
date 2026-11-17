@@ -975,7 +975,7 @@ def _dashboard_data(open_window: bool = False) -> DashboardResult:
         # computer's), with this computer's dashboard address put back: the window still
         # opens here, and shows the account's numbers.
         data = dict(hosted_proxy.call("memorysafe_health", {}))
-        data["database_path"] = str(data.get("stored_in") or "Your hosted account")
+        data["database_path"] = str(data.get("stored_in") or "Your cloud account")
         data["live_token_metrics"] = data.pop("token_estimate", None)
         data["status"] = "healthy"
         data.setdefault("recent_memories", [])
@@ -993,6 +993,9 @@ def _dashboard_data(open_window: bool = False) -> DashboardResult:
 # Every tool's own refusals reach the assistant in their own words (tool_errors).
 for _tool in server._tool_manager.list_tools():
     _tool.fn = spoken(_tool.fn)
+    # Hosts that list tools by annotations.title read the same title there.
+    if _tool.annotations is not None and _tool.title:
+        _tool.annotations = _tool.annotations.model_copy(update={"title": _tool.title})
 
 
 def main() -> None:

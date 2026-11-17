@@ -1,36 +1,38 @@
-# MemorySafe Beta Privacy Policy
+# MemorySafe Privacy Policy
 
-**Effective date:** October 17, 2026  
-**Version:** 0.3 - Private Beta
+**Effective date:** November 17, 2026  
+**Version:** 0.4
 
-This Privacy Policy explains how MemorySafe Labs Inc. ("MemorySafe Labs," "we," "us," or "our") handles personal information in connection with the MemorySafe private beta software, connector, dashboard, and support activities (the "Beta").
+This Privacy Policy explains how MemorySafe Labs Inc. ("MemorySafe Labs," "we," "us," or "our") handles personal information in connection with the MemorySafe software, connector, dashboard, and support activities ("MemorySafe").
 
-This Policy applies to information handled by MemorySafe Labs and the MemorySafe Beta. It does not replace the privacy terms that apply to the AI assistants you connect MemorySafe to or their providers, such as Anthropic or OpenAI, or to your operating system, your device-backup provider, or other services you choose to use.
+This Policy applies to information handled by MemorySafe Labs and MemorySafe. It does not replace the privacy terms that apply to the AI assistants you connect MemorySafe to or their providers, such as Anthropic or OpenAI, or to your operating system, your device-backup provider, or other services you choose to use.
 
 ## 1. Who we are
 
 MemorySafe Labs Inc. is a corporation incorporated under the Canada Business Corporations Act, federal corporation number 18085285, and registered in Quebec under enterprise number (NEQ) 1182359472.
 
-**Person responsible for the protection of personal information:** Carla Paetzold Centeno  
+**Person responsible for the protection of personal information:** the Chief Executive Officer of MemorySafe Labs Inc.  
 **Privacy contact:** contact@memorysafe.ca
 
-## 2. Privacy summary for the private beta
+## 2. Privacy summary
 
 - Memory content is stored primarily in a local SQLite database on the computer running the connector.
-- MemorySafe Labs does not operate a central memory-content database for this private beta.
-- One local database serves every compatible assistant on that computer: in this beta, Claude Code, Claude Desktop, and Codex, and, on macOS only, ChatGPT.
-- The Beta does not independently copy conversation history and does not read an assistant's own built-in memory.
+- MemorySafe Labs does not operate a central memory-content database for memories kept on your computer.
+- One local database serves every compatible assistant on that computer: today, Claude Code, Claude Desktop, and Codex, and, on macOS only, ChatGPT.
+- MemorySafe keeps no copy of your conversations and does not read an assistant's own built-in memory.
+- In Claude Code and Codex, two small programs (hooks) run on your computer. One reads each message you send, there and nowhere else: while Automatic Mode is off it saves nothing; while it is on, it saves a preference you state plainly ("always use Black") itself. The other runs when a session starts and gives the assistant about a dozen short memories, safety notes and preferences first; that text is then part of the conversation and goes to the assistant's provider like the rest of it. A memory that looks like a key, a card or government number, or someone's email, phone number or address is never given this way, even if you asked for it to be remembered; a search for it still finds it. The hooks do not run on Windows.
+- You can choose to keep your memories in a MemorySafe account instead of on this computer. From then on the assistants on this computer read and save there, the hooks leave the local file alone, and the MemorySafe Cloud privacy policy applies to what the account holds.
 - For an assistant running on the same computer, requests and responses travel locally between it and the connector. Whatever that assistant then includes in its own conversation is sent to its provider under the user's agreement with that provider.
 - ChatGPT is the exception: it reaches the connector through OpenAI's Secure MCP Tunnel, so those requests and responses pass through OpenAI's systems.
 - Automatic Mode is optional and off by default for a new installation.
-- Automatic Mode is designed to save only short, directly stated, durable, non-sensitive facts from chats where MemorySafe is selected.
-- The Beta does not currently add application-level encryption to its local database.
+- Automatic Mode is designed to save only short, directly stated, durable, non-sensitive facts from chats where MemorySafe is selected. It declines questions, passing remarks and instructions meant for one piece of work.
+- MemorySafe does not currently add application-level encryption to its local database.
 
-## 3. Information the Beta may handle
+## 3. Information MemorySafe may handle
 
 ### 3.1 Memory content
 
-The Beta may process and store content that you explicitly ask an assistant to remember, or that the assistant submits as an eligible candidate while Automatic Mode is enabled. Examples include preferences, project details, decisions, recurring tasks, and other durable facts.
+MemorySafe may process and store content that you explicitly ask an assistant to remember, or that the assistant submits as an eligible candidate while Automatic Mode is enabled. Examples include preferences, project details, decisions, recurring tasks, and other durable facts.
 
 ### 3.2 Memory metadata
 
@@ -41,12 +43,16 @@ For each memory, the local database may store:
 - importance and confidence scores;
 - whether the memory is protected from normal cleanup;
 - whether it was submitted manually or through Automatic Mode;
-- active or deleted state; and
+- search keywords the assistant added so the memory can be found in other words;
+- how many times it was recalled or stated again, and when it last was;
+- its state (active, forgotten, replaced by a newer memory, or set aside); and
 - creation, update, and deletion timestamps.
 
 ### 3.3 Settings and operational records
 
-The local database may store whether Automatic Mode is enabled and decision records such as store, protect, merge, skip, and forget events. These records may include identifiers, reasons, timestamps, and content-size measurements. The current Beta's decision records do not intentionally create a separate full copy of every chat message.
+The local database may store whether Automatic Mode is enabled and decision records such as store, protect, merge, skip, and forget events. These records may include identifiers, reasons, timestamps, and content-size measurements. So that no wording is lost, the record of a merge can quote the earlier or the incoming wording of a memory, and the record of a conflict or a replacement quotes the values that differ; these stay until the memory is erased (Section 9.3). A search is recorded as a count of the memories it returned. Its words are not kept: earlier versions kept them, and they are cleared the next time the store is searched. MemorySafe's decision records do not intentionally create a separate full copy of every chat message.
+
+MemorySafe also keeps up to five snapshots of the database beside it, so a damaged file can be recovered, and a list of erasure receipts, which hold identifiers, counts and times and no memory text.
 
 ### 3.4 Requests and responses from the assistants
 
@@ -54,13 +60,17 @@ An assistant may send the local connector a request containing a memory candidat
 
 For Claude Code, Claude Desktop, and Codex these transmissions are local to the computer, between that assistant and the connector. For ChatGPT on macOS they pass through OpenAI's Secure MCP Tunnel and therefore through OpenAI's systems.
 
-### 3.5 Support and beta feedback
+### 3.5 Support and feedback
 
 If you contact us, we may receive your name, email address, message, diagnostic details you choose to provide, and related correspondence. Do not send passwords, access keys, payment-card data, protected health information, or copies of private memories in support messages unless we specifically request necessary information through a secure method.
 
 ### 3.6 Information we do not intentionally collect centrally
 
-The current private beta contains no MemorySafe Labs analytics or telemetry service that centrally receives your complete local memory database. We do not sell memory content or personal information.
+MemorySafe contains no MemorySafe Labs analytics or telemetry service that centrally receives your complete local memory database. We do not sell memory content or personal information.
+
+### 3.7 Plans
+
+A store on your computer has no plan and no limit on how many memories it holds, and MemorySafe on your computer takes no part in any payment. Plans apply only to a MemorySafe account, where a plan sets how many memories the account can hold. Payments for a paid plan are handled by Stripe, as the MemorySafe Cloud privacy policy describes.
 
 ## 4. Why we handle information
 
@@ -70,17 +80,17 @@ We handle information as necessary to:
 - identify and merge duplicate or near-duplicate memories;
 - apply Automatic Mode safety and quality filters;
 - maintain security, diagnose problems, and prevent misuse;
-- respond to support requests and beta feedback;
-- improve the Beta using feedback and non-sensitive technical findings; and
+- respond to support requests and feedback;
+- improve MemorySafe using feedback and non-sensitive technical findings; and
 - comply with applicable law.
 
-We do not use private-beta memory content for advertising or to build marketing profiles.
+We do not use memory content for advertising or to build marketing profiles.
 
 ## 5. Automatic Mode and consent
 
 Automatic Mode is optional and off by default for a new installation. We request a separate affirmative action before it is enabled. Accepting the Terms of Use alone does not enable Automatic Mode.
 
-When enabled, Automatic Mode may store up to a small number of concise memory candidates from a user turn in a chat where MemorySafe is selected. The connected assistant is instructed to submit only durable facts you state, and not complete messages, assistant-generated text, inferred information, temporary remarks, or personal information about third parties. MemorySafe itself cannot reliably tell whether a fact is about another person, so it does not enforce that last instruction: a fact about a colleague, friend or family member that the assistant submits may be stored. You can review stored memories and forget any of them from the dashboard.
+When enabled, Automatic Mode may store up to a small number of concise memory candidates from a user turn in a chat where MemorySafe is selected. The connected assistant is instructed to submit only durable facts you state, and not complete messages, assistant-generated text, inferred information, temporary remarks, or personal information about third parties. MemorySafe also declines what it recognises as a question, an acknowledgement, a description of the conversation, an assistant's guess about you, a state true only at the moment, or an instruction for one piece of work; it recognises shapes of wording and can miss one or decline a real fact. In Claude Code and Codex, the hook described in Section 2 saves a plainly stated standing preference itself, under the same filters. MemorySafe itself cannot reliably tell whether a fact is about another person, so it does not enforce that last instruction: a fact about a colleague, friend or family member that the assistant submits may be stored. You can review stored memories and forget any of them from the dashboard.
 
 Automatic Mode filters attempt to reject likely passwords and secrets, payment and government identifiers, contact details, precise addresses, and medical or health information. The filters are experimental and are not guaranteed to detect every sensitive item.
 
@@ -88,9 +98,9 @@ You may withdraw Automatic Mode consent at any time by turning the mode off. Thi
 
 ## 6. Sensitive information and prohibited content
 
-The Beta is not designed to store protected health information, payment-card data, passwords, authentication codes, private keys, API keys, or highly sensitive identity information. Do not ask the Beta to store these categories manually. Do not submit another person's personal information unless you have a lawful basis and authority to do so.
+MemorySafe is not designed to store protected health information, payment-card data, passwords, authentication codes, private keys, API keys, or highly sensitive identity information. Do not ask MemorySafe to store these categories manually. Do not submit another person's personal information unless you have a lawful basis and authority to do so.
 
-If the Beta detects potentially sensitive content during Automatic Mode, it is designed to skip the capture and record a general skip reason. Detection may fail, so you should review memories and avoid entering sensitive information in the first place.
+If MemorySafe detects potentially sensitive content during Automatic Mode, it is designed to skip the capture and record a general skip reason. Detection may fail, so you should review memories and avoid entering sensitive information in the first place.
 
 ## 7. How information is shared
 
@@ -104,7 +114,7 @@ Anthropic privacy information is available at https://www.anthropic.com/legal/pr
 
 ### 7.2 Service providers
 
-The current private beta does not use a MemorySafe Labs cloud provider to store local memory content. We may use ordinary business service providers, such as email hosting, to process support communications. They may process information only for the service they provide and subject to applicable contractual and legal protections.
+MemorySafe does not use a MemorySafe Labs cloud provider to store local memory content. We may use ordinary business service providers, such as email hosting, to process support communications. They may process information only for the service they provide and subject to applicable contractual and legal protections.
 
 ### 7.3 Legal and safety reasons
 
@@ -132,25 +142,29 @@ Local memory content and metadata remain in the local database until the user ta
 
 ### 9.2 Current Forget behavior
 
-In the current Beta, the Forget action removes a selected memory from active recall and marks it as deleted. The underlying memory record, including its content, remains in the local SQLite database. It is not returned by normal memory searches.
+The Forget action removes a selected memory from active recall and marks it as deleted. The underlying memory record, including its content, remains in the local SQLite database, in the decision records that quote it, and in the snapshots. It is not returned by normal memory searches, and it can be restored.
 
-To completely erase the current local memory store, the user must securely delete the local `data/memorysafe.sqlite3` database and its related SQLite sidecar files, if present, after stopping the connector. This deletes all MemorySafe memories and operational records on that installation. Users who need assistance may contact contact@memorysafe.ca.
+### 9.3 Erasing
 
-Deleting a local MemorySafe record does not delete copies retained in an assistant's conversation history, in a provider's systems, in device backups, in support correspondence, or in other third-party services. Those copies are governed by the applicable service and user settings.
+Erasing is permanent. The command `memorysafe erase <memory id> --confirm` deletes the selected memory, the older versions it replaced, the decision, conflict and replacement records about them, and the words of earlier searches. It then rewrites the database file so the text is no longer in it, empties its sidecar files, deletes every snapshot and every export file the dashboard wrote, and takes one fresh snapshot. A receipt stays: the memory's identifier, the time, and counts. It holds no memory text. Assistants cannot erase; only this command can.
 
-### 9.3 Support records
+To erase the whole local memory store, run `memorysafe erase --everything "erase everything"`. This deletes the database, its sidecar files, its snapshots and the dashboard's export files on that installation, and leaves one receipt file with counts. Removing MemorySafe with `memorysafe uninstall --purge` instead saves a copy of the database to your home folder first; delete that copy yourself if you do not want it. Users who need assistance may contact contact@memorysafe.ca.
 
-We retain support and beta-feedback correspondence only as long as reasonably necessary for support, security, legal, and product-improvement purposes. Our target is deletion or anonymization within 24 months after the matter is closed, unless a longer period is required by law or reasonably necessary for a legal claim or security investigation.
+Erasing a local MemorySafe record does not delete copies retained in an assistant's conversation history or session transcripts, in a provider's systems, in export files you saved elsewhere, in device backups, in support correspondence, or in other third-party services. Those copies are governed by the applicable service and user settings.
 
-### 9.4 MemorySafe accounts (hosted service)
+### 9.4 Support records
+
+We retain support and feedback correspondence only as long as reasonably necessary for support, security, legal, and product-improvement purposes. Our target is deletion or anonymization within 24 months after the matter is closed, unless a longer period is required by law or reasonably necessary for a legal claim or security investigation.
+
+### 9.5 MemorySafe accounts (MemorySafe Cloud)
 
 If you use a MemorySafe account, your memories are stored by MemorySafe Labs on its servers instead of in a local database on your computer. You can permanently erase a single memory, or delete your whole account, on your MemorySafe account page; this deletes the data from the live service database immediately and is different from Forget. **Erased data may persist in our database backups and recovery logs for up to 30 days, after which it is gone.**
 
 ## 10. Security
 
-We use measures intended to protect the Beta, including local storage, a dashboard reachable only from the computer it runs on, access credentials, an authorized tunnel connection where one is used, limited tool actions, and Automatic Mode filters. However, no system is completely secure.
+We use measures intended to protect MemorySafe, including local storage, a data folder, database and snapshots readable only by your own user account on macOS and Linux, a dashboard reachable only from the computer it runs on, access credentials, an authorized tunnel connection where one is used, limited tool actions, and Automatic Mode filters. However, no system is completely secure.
 
-The current Beta does not add application-level encryption to the local SQLite database. Users should enable device encryption, use a strong device password, protect their assistant and operating-system accounts, restrict access to the computer, maintain appropriate backups, and never paste tunnel keys or API credentials into a chat.
+MemorySafe does not add application-level encryption to the local SQLite database. Users should enable device encryption, use a strong device password, protect their assistant and operating-system accounts, restrict access to the computer, maintain appropriate backups, and never paste tunnel keys or API credentials into a chat.
 
 If you believe MemorySafe information has been accessed or disclosed without authorization, contact us promptly at contact@memorysafe.ca.
 
@@ -158,7 +172,7 @@ If you believe MemorySafe information has been accessed or disclosed without aut
 
 Depending on applicable law, you may have rights to access, correct, delete, or obtain information about the use and disclosure of your personal information, and to withdraw consent where processing is based on consent.
 
-The Beta provides local tools to view and search active memories, remove a memory from active recall, and disable Automatic Mode. For complete local deletion, follow Section 9.2. You may also contact contact@memorysafe.ca to request assistance or exercise a privacy right concerning information held by MemorySafe Labs, such as support correspondence.
+MemorySafe provides local tools to view and search active memories, remove a memory from active recall and restore it, erase a memory permanently, export your memories to a file, and disable Automatic Mode. To correct a memory, forget or erase it and save the right one. For complete local deletion, follow Section 9.3. You may also contact contact@memorysafe.ca to request assistance or exercise a privacy right concerning information held by MemorySafe Labs, such as support correspondence.
 
 We may need to verify identity before responding to a request. We will respond within the period required by applicable law. If we cannot fulfill a request, we will explain why, subject to legal restrictions.
 
@@ -166,16 +180,16 @@ You may submit a privacy complaint to us at contact@memorysafe.ca. You may also 
 
 ## 12. Children
 
-The private Beta is intended only for adults aged 18 or older. We do not knowingly invite or authorize children to use it. If you believe a child has provided personal information through the Beta, contact us so we can take appropriate action.
+MemorySafe is intended only for adults aged 18 or older. We do not knowingly invite or authorize children to use it. If you believe a child has provided personal information through MemorySafe, contact us so we can take appropriate action.
 
 ## 13. Changes to this Policy
 
-We may update this Policy as the Beta changes. We will identify the new effective date and provide reasonable notice of material changes through the Beta, by email, or by another appropriate method. If a change requires new consent, we will request it before the new processing begins.
+We may update this Policy as MemorySafe changes. We will identify the new effective date and provide reasonable notice of material changes through MemorySafe, by email, or by another appropriate method. If a change requires new consent, we will request it before the new processing begins.
 
 ## 14. Contact
 
 **Privacy Officer**  
-Carla Paetzold Centeno  
+The Chief Executive Officer  
 MemorySafe Labs Inc.  
 Federal corporation number: 18085285  
 Quebec enterprise number (NEQ): 1182359472  

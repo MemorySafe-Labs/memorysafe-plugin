@@ -10,7 +10,7 @@ starts behind it.
 from __future__ import annotations
 
 
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 PROTOCOL_VERSION = "2024-11-05"
 
 SERVER_INSTRUCTIONS = (
@@ -19,7 +19,7 @@ SERVER_INSTRUCTIONS = (
     "if asked. (2) Open http://127.0.0.1:8765/dashboard on this computer. (3) Prove the store: "
     "remember one durable fact, then find it. Automatic capture stays off until they ask to "
     "turn it on or use the dashboard toggle. One local file is shared by Claude Desktop, "
-    "Claude Code and Codex. Nothing is uploaded unless the person chose 'In my hosted account' on "
+    "Claude Code and Codex. Nothing is uploaded unless the person chose 'In my cloud account' on "
     "the dashboard and signed in; then this computer talks to their own account at "
     "memory.memorysafe.ca and the dashboard says so. Do not claim MemorySafe reads chats by itself. "
     "When automatic mode is on and the user states durable facts — a deadline, a decision, "

@@ -449,7 +449,7 @@ def _assistants_check(home: Path, env: Mapping[str, str] | None = None, platform
         names = not_connected[0] if one else f"{', '.join(not_connected[:-1])} and {not_connected[-1]}"
         findings.append(
             f"{names} {'is' if one else 'are'} on this computer but not connected to MemorySafe. The dashboard's "
-            f"One memory, every assistant panel connects {'it' if one else 'them'}, or names the one step to take."
+            f"Connect your assistants panel connects {'it' if one else 'them'}, or names the one step to take."
         )
     if loaded_twice:
         if code.get("how") == "manual":
@@ -798,7 +798,7 @@ def _device_link_check(paths: DoctorPaths) -> dict[str, Any] | None:
     return _check(
         "device_link",
         "pass",
-        "This computer is signed in to your hosted account.",
+        "This computer is signed in to your cloud account.",
         storage_mode="hosted",
         linked=True,
         linked_at=link.get("linked_at"),

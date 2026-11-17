@@ -57,9 +57,9 @@ PENDING_SECONDS = 600
 REFRESH_MARGIN_SECONDS = 60
 HTTP_TIMEOUT_SECONDS = 10
 
-NOT_LINKED = "Hosted is chosen on this computer but it is not signed in; open the MemorySafe dashboard and sign in."
-SIGN_IN_AGAIN = "This computer's sign-in to your hosted account has ended; open the MemorySafe dashboard and sign in again."
-OFFLINE = "Your hosted account could not be reached from this computer; your memories were not changed."
+NOT_LINKED = "Your cloud account is chosen on this computer but it is not signed in; open the MemorySafe dashboard and sign in."
+SIGN_IN_AGAIN = "This computer's sign-in to your cloud account has ended; open the MemorySafe dashboard and sign in again."
+OFFLINE = "Your cloud account could not be reached from this computer; your memories were not changed."
 
 
 class LinkError(RuntimeError):
@@ -160,7 +160,7 @@ def _http(url: str, form: dict[str, str] | None, headers: dict[str, str]) -> tup
     failure is OSError, which callers turn into OFFLINE."""
 
     if not url.startswith("https://"):
-        raise LinkError("The hosted sign-in must use https.", linked=False)
+        raise LinkError("The cloud sign-in must use https.", linked=False)
     data = urllib.parse.urlencode(form).encode("ascii") if form is not None else None
     request = urllib.request.Request(url, data=data, method="POST" if form is not None else "GET")
     request.add_header("Accept", "application/json")
@@ -421,7 +421,7 @@ def _token_call(endpoint: str, form: dict[str, str], http: HttpCall, *, linked: 
         return body
     error = str(body.get("error", ""))
     if code in (400, 401) and error in ("invalid_grant", "invalid_client", "unauthorized_client", "invalid_scope"):
-        raise LinkError(SIGN_IN_AGAIN if linked else "The hosted account did not accept this sign-in; start again.", linked=False)
+        raise LinkError(SIGN_IN_AGAIN if linked else "Your cloud account did not accept this sign-in; start again.", linked=False)
     raise LinkError(OFFLINE, linked=linked)
 
 
@@ -436,7 +436,7 @@ def _record_from(tokens: dict[str, Any], endpoints: dict[str, str], *, previous:
         # an hour of access and no way on, so keep the one that worked.
         refresh = str(previous.get("refresh_token", ""))
         if not refresh:
-            raise LinkError("The hosted account did not grant a lasting sign-in; start again.", linked=False)
+            raise LinkError("Your cloud account did not grant a lasting sign-in; start again.", linked=False)
     record = {
         **{key: previous[key] for key in ("linked_at", "last_refreshed_at") if key in previous},
         "issuer": endpoints["issuer"],

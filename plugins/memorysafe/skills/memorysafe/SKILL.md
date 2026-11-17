@@ -40,7 +40,7 @@ The first start downloads uv, a Python, pinned packages and tokenizer data into 
 
 ## Connecting other assistants
 
-One install is enough: the other assistants on this computer connect to the same memory from the dashboard's **One memory, every assistant** panel, or with `connect` at the command's full path — `~/.local/share/MemorySafe/bin/memorysafe connect` on Linux, `"$HOME/Library/Application Support/MemorySafe/bin/memorysafe" connect` on macOS, `%LOCALAPPDATA%\MemorySafe\bin\memorysafe.cmd connect` on Windows. It is a dry run: show the user the list. Run it again with `--apply` only after they confirm, then ask them to restart each assistant it connected. It installs through each assistant's own plugin installer, never by editing configuration. Claude Desktop is never connected by it: the user confirms extensions inside Claude Desktop, so pass on the one step it reports.
+One install is enough: the other assistants on this computer connect to the same memory from the dashboard's **Connect your assistants** panel, or with `connect` at the command's full path — `~/.local/share/MemorySafe/bin/memorysafe connect` on Linux, `"$HOME/Library/Application Support/MemorySafe/bin/memorysafe" connect` on macOS, `%LOCALAPPDATA%\MemorySafe\bin\memorysafe.cmd connect` on Windows. It is a dry run: show the user the list. Run it again with `--apply` only after they confirm, then ask them to restart each assistant it connected. It installs through each assistant's own plugin installer, never by editing configuration. Claude Desktop is never connected by it: the user confirms extensions inside Claude Desktop, so pass on the one step it reports.
 
 ## Other MCP clients
 
